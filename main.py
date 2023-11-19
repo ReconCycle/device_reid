@@ -54,6 +54,27 @@ from superglue.models.matching import Matching
 from superglue.models.utils import (AverageTimer, VideoStreamer,
                           make_matching_plot_fast, frame2tensor)    
 
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+try:
+    from torchvision.transforms import InterpolationMode
+    BICUBIC = InterpolationMode.BICUBIC
+except ImportError:
+    BICUBIC = Image.BICUBIC
+
+# from CLIP
+def _convert_image_to_rgb(image):
+    return image.convert("RGB")
+
+# from CLIP
+def _transform(n_px):
+    return Compose([
+        Resize(n_px, interpolation=BICUBIC),
+        CenterCrop(n_px),
+        _convert_image_to_rgb,
+        ToTensor(),
+        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
+
 
 class Main():
     def __init__(self, raw_args=None) -> None:
@@ -179,8 +200,12 @@ class Main():
         transform_normalise = A.Normalize(mean=self.norm_mean, std=self.norm_std) # imagenet
         transform_resize = A.augmentations.geometric.resize.LongestMaxSize(max_size=224, always_apply=True)
 
+        if self.args.model == "clip":
+            print("[blue]Using special CLIP transform!!!")
+            self.train_transform = _transform(224)
+            self.val_transform = _transform(224)
 
-        if self.args.model in eval_only_models:
+        elif self.args.model in eval_only_models:
             # don't normalise. We only evaluate these models
             self.val_transform = A.Compose([
                 ToTensorV2()
@@ -194,11 +219,14 @@ class Main():
             if not self.model_rgb:
                 val_tf_list.append(Grayscale(always_apply=True))
 
+            #! clip is in eval_only_models so this is dumb...
+
             val_tf_list.append(transform_normalise)
             if self.args.model == "clip" or self.args.backbone == "clip":
                 val_tf_list.append(transform_resize)
-
-            val_tf_list.append(ToTensorV2())
+                # ! CLIP uses its own preprocessing! so don't use ToTensorV2()
+            else:
+                val_tf_list.append(ToTensorV2())
         
             # train transforms
             if not self.model_rgb:
@@ -207,8 +235,9 @@ class Main():
             train_tf_list.append(transform_normalise)    
             if self.args.model == "clip" or self.args.backbone == "clip":
                 train_tf_list.append(transform_resize)
-
-            train_tf_list.append(ToTensorV2())
+                # ! CLIP uses its own preprocessing! so don't use ToTensorV2()
+            else:
+                train_tf_list.append(ToTensorV2())
 
             self.val_transform = A.Compose(val_tf_list)
             self.train_transform = A.Compose(train_tf_list)

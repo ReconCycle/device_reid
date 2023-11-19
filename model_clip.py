@@ -32,7 +32,10 @@ class ClipModel(pl.LightningModule):
         self.val_datasets = None
 
     def backbone(self, sample):
-        return self.model.encode_image(sample.to(self.device))
+        print("type(sample)", type(sample))
+
+        # img_pre = self.preprocess(sample).unsqueeze(0).to(self.device)
+        return self.model.encode_image(sample)
 
 
     def evaluate(self, batch, name, stage=None):

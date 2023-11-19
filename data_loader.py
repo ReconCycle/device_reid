@@ -110,8 +110,12 @@ class ImageDataset(datasets.ImageFolder):
             sample, poly = ObjectReId.find_and_crop_det(sample, graph)
             
             # apply albumentations transform
-            sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB)
-            sample = self.transform(image=sample)["image"]
+            sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB) #! do we need this??
+            if isinstance(self.transform, A.Compose):
+                sample = self.transform(image=sample)["image"]
+            else:
+                sample_pil = Image.fromarray(sample)
+                sample = self.transform(sample_pil)
         
         else:
             # for the preprocessing step
