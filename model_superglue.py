@@ -15,14 +15,14 @@ from object_reid_superglue import ObjectReIdSuperGlue
 
 # define the LightningModule
 class SuperGlueModel(pl.LightningModule):
-    def __init__(self, batch_size, opt=None, cutoff=0.5, visualise=False):
+    def __init__(self, batch_size, model="indoor", cutoff=0.5, visualise=False):
         super().__init__()
         self.save_hyperparameters() # save paramaters (matching_config) to checkpoint
-        
+
         self.batch_size = batch_size
         self.cutoff = cutoff
         self.visualise = visualise
-        self.object_reid = ObjectReIdSuperGlue(opt=opt)
+        self.object_reid = ObjectReIdSuperGlue(model=model)
 
         self.accuracy = BinaryAccuracy().to(self.device)
 
@@ -38,8 +38,8 @@ class SuperGlueModel(pl.LightningModule):
         # iterate over batch
         batch_result = []
         for i in np.arange(len(sample1)):
-            img1 = exp_utils.torch_to_np_img(sample1[i]).astype(np.float32)
-            img2 = exp_utils.torch_to_np_img(sample2[i]).astype(np.float32)
+            img1 = exp_utils.torch_to_grayscale_np_img(sample1[i]).astype(np.float32)
+            img2 = exp_utils.torch_to_grayscale_np_img(sample2[i]).astype(np.float32)
         
             result = self.object_reid.compare(img1, img2, visualise=self.visualise)
             if result is None:

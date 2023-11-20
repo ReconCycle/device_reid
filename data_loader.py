@@ -264,44 +264,47 @@ class DataLoader():
         }
         
     def visualise(self, type_name, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], save_path=None):
-        
+
         #! This seems broken when dataloader is on cuda!
         for i, (sample, labels, path, detections) in enumerate(self.dataloaders[type_name]):
+            
+            if mean is None or std is None:
+                samples_denorm = sample
+            else:
+                mean = np.array(mean)
+                std = np.array(std)
 
-            mean = np.array(mean)
-            std = np.array(std)
+                samples_denorm = []
+                for sample_img in sample:
+                    # undo ToTensorV2
+                    
+                    # CHW -> HWC
+                    # Images must be in HWC format, not in CHW
+                    sample_np = sample_img.cpu().numpy()
+                    sample_np = sample_np.transpose(1, 2, 0) # W and H might be wrong way around
 
-            samples_denorm = []
-            for sample_img in sample:
-                # undo ToTensorV2
-                
-                # CHW -> HWC
-                # Images must be in HWC format, not in CHW
-                sample_np = sample_img.cpu().numpy()
-                sample_np = sample_np.transpose(1, 2, 0) # W and H might be wrong way around
+                    # undo normalize
+                    denorm = A.Normalize(
+                        mean=[-m / s for m, s in zip(mean, std)],
+                        std=[1.0 / s for s in std],
+                        always_apply=True,
+                        max_pixel_value=1.0
+                    )
+                    sample_denorm = denorm(image=sample_np)["image"]
 
-                # undo normalize
-                denorm = A.Normalize(
-                    mean=[-m / s for m, s in zip(mean, std)],
-                    std=[1.0 / s for s in std],
-                    always_apply=True,
-                    max_pixel_value=1.0
-                )
-                sample_denorm = denorm(image=sample_np)["image"]
+                    # to view with opencv we convert to BGR
+                    print("sample_denorm.shape", sample_denorm.shape)
+                    sample_denorm = cv2.cvtColor(sample_denorm, cv2.COLOR_RGB2BGR)
 
-                # to view with opencv we convert to BGR
-                print("sample_denorm.shape", sample_denorm.shape)
-                sample_denorm = cv2.cvtColor(sample_denorm, cv2.COLOR_RGB2BGR)
+                    # cv2.imshow("sample_denorm", sample_denorm)
+                    # k = cv2.waitKey(0)
 
-                # cv2.imshow("sample_denorm", sample_denorm)
-                # k = cv2.waitKey(0)
+                    # we convert back to python format to view in grid
+                    # HWC -> CHW
+                    sample_denorm = sample_denorm.transpose(2, 0, 1)
+                    sample_denorm = torch.from_numpy(sample_denorm)
 
-                # we convert back to python format to view in grid
-                # HWC -> CHW
-                sample_denorm = sample_denorm.transpose(2, 0, 1)
-                sample_denorm = torch.from_numpy(sample_denorm)
-
-                samples_denorm.append(sample_denorm)
+                    samples_denorm.append(sample_denorm)
 
             # create grid
             img_grid = make_grid(samples_denorm)

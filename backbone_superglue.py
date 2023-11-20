@@ -1,13 +1,23 @@
 import torch
 from torch import optim, nn
 import torchvision
+from types import SimpleNamespace
 
 from superglue.models.matching import Matching
 
 
 class BackboneSuperglue():
-    def __init__(self, opt, freeze=True, device="cuda") -> None:
+    def __init__(self, model="indoor", freeze=True, device="cuda") -> None:
         self.type = "superglue"
+
+        opt = SimpleNamespace()
+        opt.superglue = model
+        opt.nms_radius = 4
+        opt.sinkhorn_iterations = 20
+        opt.match_threshold = 0.5 # default 0.2
+        opt.show_keypoints = True
+        opt.keypoint_threshold = 0.005
+        opt.max_keypoints = -1
 
         matching_config = {
             'superpoint': {

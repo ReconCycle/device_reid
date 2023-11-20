@@ -50,9 +50,7 @@ from model_clip import ClipModel
 from graph_relations import GraphRelations
 from object_reid import ObjectReId
 
-from superglue.models.matching import Matching
-from superglue.models.utils import (AverageTimer, VideoStreamer,
-                          make_matching_plot_fast, frame2tensor)    
+from superglue.models.matching import Matching    
 
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 try:
@@ -74,6 +72,18 @@ def _transform(n_px):
         ToTensor(),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
+
+# TODO: get grayscale working for superglue
+class Grayscale(ImageOnlyTransform):
+    def __init__(self, always_apply=True, p=0.5):
+        super(Grayscale, self).__init__(always_apply, p)
+
+    def apply(self, img, **params):
+        img_np = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        return img_np
+    
+    def get_transform_init_args_names(self):
+        return ()
 
 
 class Main():
@@ -103,15 +113,16 @@ class Main():
         eval_only_models = ["superglue", "cosine", "clip"]
 
         parser.add_argument('--mode', type=str, default="train") # train/eval
-        parser.add_argument('--model', type=str, default='triplet') 
+        parser.add_argument('--model', type=str, default='triplet')
+        parser.add_argument('--superglue_model', type=str, default='indoor')
         # superglue/sift
         # pw_concat_bce/pw_cos/pw_cos2
         # triplet
-        parser.add_argument('--backbone', type=str, default='resnet_imagenet') # resnet_imagenet, clip, superglue
+        parser.add_argument('--backbone', type=str, default=None) # resnet_imagenet, clip, superglue
         parser.add_argument('--visualise', type=str2bool, default=False)
         parser.add_argument('--cutoff', type=float, default=0.01) # SIFT=0.01, superglue=0.5
         parser.add_argument('--batch_size', type=int, default=16)
-        parser.add_argument('--batches_per_epoch', type=int, default=300)
+        parser.add_argument('--batches_per_epoch', type=int, default=10) #! was 300, for debugging 10
         parser.add_argument('--train_epochs', type=int, default=50)
         parser.add_argument('--eval_epochs', type=int, default=1)
         parser.add_argument('--early_stopping', type=str2bool, default=True)
@@ -138,7 +149,10 @@ class Main():
             self.args.checkpoint_path = ""
 
             # create a new directory when we train
-            results_path = os.path.join(self.args.results_base_path, datetime.now().strftime('%Y-%m-%d__%H-%M' + f"_{self.args.model}_{self.args.backbone}"))
+            results_path = os.path.join(self.args.results_base_path, datetime.now().strftime('%Y-%m-%d__%H-%M' + f"_{self.args.model}"))
+            if self.args.backbone is not None:
+                results_path += f"_{self.args.backbone}"
+
             if os.path.isdir(results_path):
                 print("[red]results_path already exists!")
                 return
@@ -149,95 +163,66 @@ class Main():
         
         torch.set_grad_enabled(True)
         
-        opt = SimpleNamespace()
-        opt.superglue = "indoor"
-        opt.nms_radius = 4
-        opt.sinkhorn_iterations = 20
-        opt.match_threshold = 0.5 # default 0.2
-        opt.show_keypoints = True
-        opt.keypoint_threshold = 0.005
-        opt.max_keypoints = -1
-        
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         self.model_rgb = True
         if self.args.model in ["superglue", "sift"] or self.args.backbone == "superglue":
             self.model_rgb = False
 
+        self.norm_mean = None
+        self.norm_std = None
 
-        # TODO: get grayscale working for superglue
-        class Grayscale(ImageOnlyTransform):
-            def __init__(self, always_apply=True, p=0.5):
-                super(Grayscale, self).__init__(always_apply, p)
-
-            def apply(self, img, **params):
-                img_np = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                return img_np
-            
-            def get_transform_init_args_names(self):
-                return ()
-
-        val_tf_list = []
-        train_tf_list = [
-            A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.25, rotate_limit=45, p=0.5),
-            A.OpticalDistortion(p=0.5),
-            A.GridDistortion(p=0.5),
-            A.HueSaturationValue(p=0.5),
-            A.RandomResizedCrop(400, 400, p=0.3),
-            A.RGBShift(r_shift_limit=40, g_shift_limit=40, b_shift_limit=40, p=0.5),
-            A.RandomBrightnessContrast(p=0.3),
-        ]
-
-        # computed transform using compute_mean_std() to give:
-        # transform_normalise = A.Normalize(mean=(0.5895, 0.5935, 0.6036), std=(0.1180, 0.1220, 0.1092))
-        # imagenet normalize
-        self.norm_mean = [0.485, 0.456, 0.406]
-        self.norm_std = [0.229, 0.224, 0.225]
-        if not self.model_rgb:
-            self.norm_mean = [np.mean(self.norm_mean)]
-            self.norm_std = [np.mean(self.norm_std)]
-        
-        transform_normalise = A.Normalize(mean=self.norm_mean, std=self.norm_std) # imagenet
-        transform_resize = A.augmentations.geometric.resize.LongestMaxSize(max_size=224, always_apply=True)
-
-        if self.args.model == "clip":
-            print("[blue]Using special CLIP transform!!!")
+        if self.args.model == "clip" or self.args.backbone == "clip":
+            print("\n[blue]Using special CLIP transform!!!!!!!!!!!!!\n")
             self.train_transform = _transform(224)
             self.val_transform = _transform(224)
+        elif self.args.model == "superglue" or self.args.backbone == "superglue":
+            # don't normalise. We only evaluate these models
+            self.val_transform = A.Compose([ToTensorV2()])
+            self.train_transform = A.Compose([ToTensorV2()])
 
         elif self.args.model in eval_only_models:
+            #! what other eval_only_models do we have?
             # don't normalise. We only evaluate these models
-            self.val_transform = A.Compose([
-                ToTensorV2()
-            ])
-
-            train_tf_list.append(ToTensorV2())
-            self.train_transform = A.Compose(train_tf_list)
+            self.val_transform = A.Compose([ToTensorV2()])
+            self.train_transform = A.Compose([ToTensorV2()])
 
         else:
+            val_tf_list = []
+            train_tf_list = [
+                A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.25, rotate_limit=45, p=0.5),
+                A.OpticalDistortion(p=0.5),
+                A.GridDistortion(p=0.5),
+                A.HueSaturationValue(p=0.5),
+                A.RandomResizedCrop(400, 400, p=0.3),
+                A.RGBShift(r_shift_limit=40, g_shift_limit=40, b_shift_limit=40, p=0.5),
+                A.RandomBrightnessContrast(p=0.3),
+            ]
+
+            # computed transform using compute_mean_std() to give:
+            # transform_normalise = A.Normalize(mean=(0.5895, 0.5935, 0.6036), std=(0.1180, 0.1220, 0.1092))
+            # imagenet normalize
+            self.norm_mean = [0.485, 0.456, 0.406]
+            self.norm_std = [0.229, 0.224, 0.225]
+            if not self.model_rgb:
+                self.norm_mean = [np.mean(self.norm_mean)]
+                self.norm_std = [np.mean(self.norm_std)]
+            
+            transform_normalise = A.Normalize(mean=self.norm_mean, std=self.norm_std) # imagenet
+
             # validation transforms
             if not self.model_rgb:
                 val_tf_list.append(Grayscale(always_apply=True))
 
-            #! clip is in eval_only_models so this is dumb...
-
             val_tf_list.append(transform_normalise)
-            if self.args.model == "clip" or self.args.backbone == "clip":
-                val_tf_list.append(transform_resize)
-                # ! CLIP uses its own preprocessing! so don't use ToTensorV2()
-            else:
-                val_tf_list.append(ToTensorV2())
+            val_tf_list.append(ToTensorV2())
         
             # train transforms
             if not self.model_rgb:
                 train_tf_list.append(Grayscale(always_apply=True))
             
             train_tf_list.append(transform_normalise)    
-            if self.args.model == "clip" or self.args.backbone == "clip":
-                train_tf_list.append(transform_resize)
-                # ! CLIP uses its own preprocessing! so don't use ToTensorV2()
-            else:
-                train_tf_list.append(ToTensorV2())
+            train_tf_list.append(ToTensorV2())
 
             self.val_transform = A.Compose(val_tf_list)
             self.train_transform = A.Compose(train_tf_list)
@@ -249,7 +234,7 @@ class Main():
         elif self.args.backbone == "clip":
             self.backbone = BackboneClip(freeze=self.args.freeze_backbone, device=self.device)
         elif self.args.backbone == "superglue":
-            self.backbone = BackboneSuperglue(opt, freeze=self.args.freeze_backbone, device=self.device)
+            self.backbone = BackboneSuperglue(model=self.args.superglue_model, freeze=self.args.freeze_backbone, device=self.device)
 
         # setup model
         if self.args.model == "superglue":
@@ -257,7 +242,7 @@ class Main():
             if self.args.mode == "train":
                 print("[red]This model is eval only![/red]")
                 return
-            self.model = SuperGlueModel(self.args.batch_size, opt=opt, visualise=self.args.visualise)
+            self.model = SuperGlueModel(self.args.batch_size, model=self.args.superglue_model, visualise=self.args.visualise)
         elif self.args.model == "sift":
             print("using SIFT")
             self.model = SIFTModel(self.args.batch_size, cutoff=self.args.cutoff, visualise=self.args.visualise)

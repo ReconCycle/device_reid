@@ -46,7 +46,7 @@ def scale_img(img, scale_percent=50):
     return resized
 
 
-def torch_to_np_img(torch_img):
+def torch_to_grayscale_np_img(torch_img):
     # convert to PIL
     img_pil = transforms.ToPILImage()(torch_img)
     img_np = np.array(img_pil)

@@ -3,3 +3,9 @@ results/
 
 temp*
 *.mp4
+
+*.pth
+*.pt
+
+*.jpg
+*.png

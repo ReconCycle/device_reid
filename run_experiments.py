@@ -11,14 +11,16 @@ if __name__ == '__main__':
 
     # # superglue eval
     Main(["--mode", "eval",
-        "--cutoff", "0.5",
+        "--cutoff", "0.8",
         "--model", "superglue",
+        "--superglue_model", "/home/sruiz/projects/reconcycle/superglue_training/output/train/2023-11-18_superglue_model/weights/best.pt",
         "--visualise", "False"])
 
     # # pairwise_classifier train
     # main = Main(["--mode", "train",
+    #              "--backbone", "clip",
     #             "--model", "pairwise_classifier",
-    #             "--freeze_backbone", "False"])
+    #             "--freeze_backbone", "True"])
     
     # results_path = main.args.results_path
 
