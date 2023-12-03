@@ -35,7 +35,7 @@ class ObjectReIdSuperGlue(ObjectReId):
         opt.superglue = model
         opt.nms_radius = 4
         opt.sinkhorn_iterations = 20
-        opt.match_threshold = 0.2
+        opt.match_threshold = 0.7
         opt.show_keypoints = True
         opt.keypoint_threshold = 0.005
         opt.max_keypoints = -1
@@ -90,7 +90,7 @@ class ObjectReIdSuperGlue(ObjectReId):
         self.compare(img0, img1, visualise=visualise)
 
 
-    def compare(self, img1, img2, visualise=False, debug=True):
+    def compare(self, img1, img2, gt=None, visualise=False, debug=True):
         if visualise:
             print("[blue]starting compare...[/blue]")
         # self.timer.update('data')
@@ -123,6 +123,7 @@ class ObjectReIdSuperGlue(ObjectReId):
         valid = matches > -1
         mkpts0 = kpts0[valid]
         mkpts1 = kpts1[matches[valid]]
+        mconf = confidence[valid]
 
         k_thresh = self.matching.superpoint.config['keypoint_threshold']
         m_thresh = self.matching.superglue.config['match_threshold']
@@ -136,22 +137,38 @@ class ObjectReIdSuperGlue(ObjectReId):
             if debug:
                 print("not enough matches for SuperGlue", len(matches[valid]))
             # todo: return something else than 0.0, more like undefined.
-            return 0.0
+            # return 0.0, None, None
+            affine_loss = 100.0
+            score_ratio = 0.0
+            affine_median_error = 100
         else:
-            mean_error, median_error, max_error = self.calculate_matching_error(mkpts0, mkpts1)
+            # see superglue_training/match_homography.py, for how we do stuff for evaluation
+            # sort_index = np.argsort(mconf)[::-1][0:4]
+            # est_homo_dlt = cv2.getPerspectiveTransform(mkpts0[sort_index, :], mkpts1[sort_index, :])
+            # est_homo_ransac, _ = cv2.findHomography(mkpts0, mkpts1, method=cv2.RANSAC, maxIters=3000)
+
+
+            mean_error, affine_median_error, max_error = self.calculate_affine_matching_error(mkpts0, mkpts1)
             
             # a median error of less than 0.5 is good
             strength = 1.0 # increase strength for harsher score function
-            score = 1/(strength*median_error + 1) #! we should test this score function
-            
-            if debug:
-                print("median_error", median_error)
-                print("score", score)
+            affine_loss = 1/(strength*affine_median_error + 1) #! we should test this score function
             
             min_num_kpts = min(len(kpts0), len(kpts1))
             
             score_ratio = len(matches[valid])/min_num_kpts
-            
+
+            if debug:
+                print("confidence[valid]", confidence[valid])
+                print("matches[valid].shape", len(matches[valid]), matches[valid].shape)
+                print("mean_error", mean_error)
+                print("median_error", affine_median_error)
+                print("max_error", max_error)
+                print("affine_loss (lower is better)", affine_loss)
+                print("score_ratio (higher is better)", score_ratio)
+                print("gt", gt)
+
+        vis_out = None
         if visualise:
             color = cm.jet(confidence[valid])
             text = [
@@ -164,16 +181,13 @@ class ObjectReIdSuperGlue(ObjectReId):
                 'Match Threshold: {:.2f}'.format(m_thresh),
                 # 'Image Pair: {:06}:{:06}'.format(stem0, stem1),
             ]
-            out = make_matching_plot_fast(
+            vis_out = make_matching_plot_fast(
                 img1, img2, kpts0, kpts1, mkpts0, mkpts1, color, text,
                 path=None, show_keypoints=self.opt.show_keypoints, small_text=small_text)
-            cv2.imshow('SuperGlue matches', out)
-            cv2.waitKey() # visualise
-
-        if debug:
-            print("[green]score_ratio", score_ratio)
+            # cv2.imshow('SuperGlue matches', out)
+            # cv2.waitKey() # visualise
         
-        return score_ratio
+        return affine_loss, score_ratio, mconf, affine_median_error, len(matches[valid]), vis_out
 
 
 if __name__ == '__main__':
@@ -188,7 +202,7 @@ if __name__ == '__main__':
         1000000)
 
     img1 = vs.load_image("/home/sruiz/datasets2/reconcycle/2023-02-20_hca_backs_processed/hca_0/0001.jpg")
-    img2 = vs.load_image("/home/sruiz/datasets2/reconcycle/2023-02-20_hca_backs_processed/hca_0/0002.jpg")
+    img2 = vs.load_image("/home/sruiz/datasets2/reconcycle/2023-02-20_hca_backs_processed/hca_1/0002.jpg")
 
     print("img1.shape", img1.shape)
     print("img2.shape", img2.shape)

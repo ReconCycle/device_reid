@@ -30,6 +30,7 @@ from exp_utils import str2bool
 
 from data_loader_even_pairwise import DataLoaderEvenPairwise
 from data_loader_triplet import DataLoaderTriplet
+from data_loader import DataLoader
 
 from backbone_resnet import BackboneResnet
 from backbone_clip import BackboneClip
@@ -43,6 +44,7 @@ from model_triplet import TripletModel
 from model_superglue import SuperGlueModel
 from model_sift import SIFTModel
 from model_clip import ClipModel
+from model_classify import ClassifyModel
 
 
 # do as if we are in the parent directory
@@ -154,7 +156,7 @@ class Main():
                 results_path += f"_{self.args.backbone}"
 
             if os.path.isdir(results_path):
-                print("[red]results_path already exists!")
+                print(f"[red]results_path already exists! {results_path}")
                 return
             else:
                 os.makedirs(results_path)
@@ -281,6 +283,16 @@ class Main():
                                       freeze_backbone=self.args.freeze_backbone,
                                       visualise=self.args.visualise)
 
+        elif self.args.model == "classify":
+            print("classify model")
+            self.model = ClassifyModel(num_classes=len(seen_classes),
+                                      batch_size=self.args.batch_size,
+                                      learning_rate=self.args.learning_rate,
+                                      weight_decay=self.args.weight_decay,
+                                      freeze_backbone=self.args.freeze_backbone,
+                                      visualise=self.args.visualise)
+
+
         
         # setup dataloader
         if self.args.model in ["superglue", "sift", "pairwise_classifier", "pairwise_classifier2", "pairwise_classifier3", "cosine", "clip"]:
@@ -303,6 +315,18 @@ class Main():
                                         unseen_classes=self.args.unseen_classes,
                                         train_transform=self.train_transform,
                                         val_transform=self.val_transform)
+        
+        elif self.args.model in ["classify"]:
+            self.dl = DataLoader(self.args.img_path,
+                                        preprocessing_path=self.args.preprocessing_path,
+                                        batch_size=self.args.batch_size,
+                                        num_workers=8,
+                                        shuffle=True,
+                                        seen_classes=self.args.seen_classes,
+                                        unseen_classes=self.args.unseen_classes,
+                                        train_transform=self.train_transform,
+                                        val_transform=self.val_transform)
+
 
         
         logging.basicConfig(filename=os.path.join(self.args.results_path, f'{self.args.mode}.log'), level=logging.DEBUG)
@@ -372,7 +396,7 @@ class Main():
         
 
     def eval(self, model_path=None):
-        logging.info(f"running eval...")
+        logging.info(f"[blue]running eval...")
 
         if model_path is None and self.args.model in ["pairwise_classifier", "pairwise_classifier2", "pairwise_classifier3", "triplet"]:
             model_path = os.path.join(self.args.results_path, self.args.checkpoint_path)
@@ -405,7 +429,11 @@ class Main():
 
         # test the model
         print("[blue]eval_results:[/blue]")
-        test_datasets = ["seen_train", "seen_val", "test"]
+
+        if self.args.model == "classify":
+            test_datasets = ["seen_train", "seen_val"]
+        else:
+            test_datasets = ["seen_train", "seen_val", "test"]
         self.model.test_datasets = test_datasets
         output = trainer.test(self.model,
                                   dataloaders=[self.dl.dataloaders[name] for name in test_datasets])

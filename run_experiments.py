@@ -3,6 +3,12 @@ from main import Main
 if __name__ == '__main__':
     # run all experiments
 
+    # classification
+    main = Main(["--mode", "train",
+                "--model", "classify",
+                "--early_stopping", "False",
+                "--freeze_backbone", "False"])
+
     # # SIFT eval
     # Main(["--mode", "train",
     #     "--train_epochs", "1",
@@ -10,11 +16,11 @@ if __name__ == '__main__':
     #     "--model", "sift"])
 
     # # superglue eval
-    Main(["--mode", "eval",
-        "--cutoff", "0.8",
-        "--model", "superglue",
-        "--superglue_model", "/home/sruiz/projects/reconcycle/superglue_training/output/train/2023-11-18_superglue_model/weights/best.pt",
-        "--visualise", "False"])
+    # Main(["--mode", "eval",
+    #     "--cutoff", "0.8",
+    #     "--model", "superglue",
+    #     "--superglue_model", "/home/sruiz/projects/reconcycle/superglue_training/output/train/2023-11-18_superglue_model/weights/best.pt",
+    #     "--visualise", "False"])
 
     # # pairwise_classifier train
     # main = Main(["--mode", "train",

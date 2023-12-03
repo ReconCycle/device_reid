@@ -160,6 +160,8 @@ class DataLoader():
         self.seen_dirs = seen_classes
         self.unseen_dirs = unseen_classes
 
+        self.dataloader_imgs = self # hack for being able to call dataloader_imgs.visualise
+
 
 
         # train_tf_dataset = datasets.StanfordCars(root="/home/sruiz/datasets2", 

@@ -27,7 +27,7 @@ class ObjectReId:
 
 
     @staticmethod
-    def calculate_matching_error(pts1_matches, pts2_matches):
+    def calculate_affine_matching_error(pts1_matches, pts2_matches):
         
         # todo: compute keypoint locations in world coordinates. Then our error will also be in meters.
         
@@ -43,17 +43,18 @@ class ObjectReId:
         X = pad(pts1_matches)
         # print("X.shape", X.shape)
         Y = pad(pts2_matches)
-        # print("Y.shape", X.shape)
+        # print("Y.shape", Y.shape)
         A, res, rank, s = np.linalg.lstsq(X, Y, rcond=None)
         affine_transform = lambda x: unpad(np.dot(pad(x), A))
         
         # print("affine_transform(pts1_matches).shape", affine_transform(pts1_matches).shape)
         
         # find mean error
-        abs_diff = np.abs(pts2_matches - affine_transform(pts1_matches))
-        mean_error = np.mean(abs_diff)
-        max_error = np.max(abs_diff)
-        median_error = np.median(abs_diff)
+        diff = np.linalg.norm(pts2_matches - affine_transform(pts1_matches), axis=0)
+        # print("diff", diff)
+        mean_error = np.mean(diff)
+        max_error = np.max(diff)
+        median_error = np.median(diff)
         
         # print("mean_error", mean_error)
         # print("median_error", median_error)

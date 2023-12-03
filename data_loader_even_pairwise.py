@@ -225,7 +225,7 @@ class DataLoaderEvenPairwise():
             self.dataloader_imgs = DataLoader(img_path,
                                          preprocessing_path=preprocessing_path,
                                          batch_size=batch_size,
-                                         shuffle=shuffle,
+                                         shuffle=True, #! if we don't shuffle, then the pairs are silly
                                          validation_split=validation_split,
                                          seen_classes=seen_classes,
                                          unseen_classes=unseen_classes,
