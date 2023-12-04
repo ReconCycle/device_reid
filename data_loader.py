@@ -205,7 +205,7 @@ class DataLoader():
         self.datasets["seen_train"] = torch.utils.data.Subset(train_tf_dataset, seen_train_idxs)
         self.datasets["seen_val"] = torch.utils.data.Subset(val_tf_dataset, seen_val_idxs)
         self.datasets["seen_test"] = torch.utils.data.Subset(val_tf_dataset, seen_test_idxs)
-        
+
         # add unseen dataset
         self.datasets["unseen_test"] = ImageDataset(img_path,
                                                 preprocessing_path,
@@ -217,6 +217,12 @@ class DataLoader():
         # concat seen_test and unseen_test datasets
         self.datasets["test"] = torch.utils.data.ConcatDataset([self.datasets["seen_test"], self.datasets["unseen_test"]])
         
+        self.datasets["all"] = torch.utils.data.ConcatDataset([
+            self.datasets["seen_train"], 
+            self.datasets["seen_val"], 
+            self.datasets["seen_test"], 
+            self.datasets["unseen_test"]])
+
         # create the dataloaders
         # todo: fix bug, either requiring: generator=torch.Generator(device='cuda'),
         # todo: or requiring shuffle=False

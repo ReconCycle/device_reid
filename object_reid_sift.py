@@ -19,7 +19,7 @@ from graph_relations import GraphRelations, exists_detection, compute_iou
 from context_action_framework.types import Action, Detection, Gap, Label
 
 from helpers import scale_img
-from object_reid import ObjectReId
+from vision_pipeline.object_reid import ObjectReId
 
 # detections have the add properties:
 # - obb_normed

@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from graph_relations import GraphRelations, exists_detection, compute_iou
 
 from helpers import scale_img
-from object_reid import ObjectReId
+from vision_pipeline.object_reid import ObjectReId
 from pathlib import Path
 import torch
 from superglue.models.matching import Matching
