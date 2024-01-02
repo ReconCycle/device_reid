@@ -15,7 +15,6 @@ import exp_utils as exp_utils
 
 from data_loader_even_pairwise import DataLoaderEvenPairwise
 
-from superglue.models.matching import Matching
 
 # define the LightningModule
 class PwConcatBCEModel(pl.LightningModule):

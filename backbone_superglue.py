@@ -3,7 +3,7 @@ from torch import optim, nn
 import torchvision
 from types import SimpleNamespace
 
-from superglue.models.matching import Matching
+from superglue_training.models.matching import Matching
 
 
 class BackboneSuperglue():

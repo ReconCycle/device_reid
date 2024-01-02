@@ -8,29 +8,28 @@ from rich import print
 from PIL import Image
 from tqdm import tqdm
 import logging
-from types import SimpleNamespace
 import torch
-from torch import optim, nn, utils, Tensor
-from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
-import torchvision.transforms as transforms
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
-from torchmetrics import Accuracy
-from torchmetrics.classification import BinaryAccuracy
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from albumentations.core.transforms_interface import ImageOnlyTransform
+
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+import seaborn as sn
+import pandas as pd
 
 import argparse
 
 import exp_utils as exp_utils
 from exp_utils import str2bool
 
+from data_loader import DataLoader, random_seen_unseen_class_split
 from data_loader_even_pairwise import DataLoaderEvenPairwise
 from data_loader_triplet import DataLoaderTriplet
-from data_loader import DataLoader
 
 from backbone_resnet import BackboneResnet
 from backbone_clip import BackboneClip
@@ -49,10 +48,10 @@ from model_classify import ClassifyModel
 
 # do as if we are in the parent directory
 # sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from graph_relations import GraphRelations
-from object_reid import ObjectReId
+# from action_predictor.graph_relations import GraphRelations
+# from vision_pipeline.object_reid import ObjectReId
 
-from superglue.models.matching import Matching    
+from superglue_training.models.matching import Matching    
 
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 try:
@@ -96,23 +95,11 @@ class Main():
             description='pairwise classifier',
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-        # seen_classes = ["hca_0", "hca_1", "hca_2", "hca_2a"]
-        # unseen_classes = ["hca_7", "hca_8", "hca_9", "hca_10"]
-        seen_classes = ["hca_0", "hca_1", "hca_2", "hca_2a", "hca_3", "hca_4", "hca_5", "hca_6"]
-        unseen_classes = ["hca_7", "hca_8", "hca_9", "hca_10", "hca_11", "hca_11a", "hca_12"]
-
         base_path = os.path.dirname(os.path.abspath(__file__))
         print("base path:", base_path)
 
-        img_path = os.path.join(base_path, "datasets/2023-02-20_hca_backs")
-        preprocessing_path = os.path.join(base_path, "datasets/2023-02-20_hca_backs_preprocessing_opencv")
+        img_path = os.path.expanduser("~/datasets2/reconcycle/2023-12-04_hcas_fire_alarms_sorted_cropped")
         results_base_path = os.path.join(base_path, "results/")
-
-        # for eval only with pairwise_classifier:
-        results_path = os.path.join(base_path, "results/2023-03-14__17-38-43")
-        checkpoint_path = "lightning_logs/version_0/checkpoints/epoch=19-step=2000.ckpt"
-
-        eval_only_models = ["superglue", "cosine", "clip"]
 
         parser.add_argument('--mode', type=str, default="train") # train/eval
         parser.add_argument('--model', type=str, default='triplet')
@@ -134,17 +121,18 @@ class Main():
         parser.add_argument('--weight_decay', type=float, default=0.0)
 
         parser.add_argument('--img_path', type=str, default=img_path)
-        parser.add_argument('--preprocessing_path', type=str, default=preprocessing_path)
         parser.add_argument('--results_base_path', type=str, default=results_base_path)
-        parser.add_argument('--seen_classes', type=str, nargs='+', default=seen_classes)
-        parser.add_argument('--unseen_classes', type=str, nargs='+', default=unseen_classes)
+        parser.add_argument('--seen_classes', type=str, nargs='+', default=[])
+        parser.add_argument('--unseen_classes', type=str, nargs='+', default=[])
 
         # for eval only:
-        parser.add_argument('--results_path', type=str, default=results_path)
-        parser.add_argument('--checkpoint_path', type=str, default=checkpoint_path)
+        parser.add_argument('--results_path', type=str, default="")
+        parser.add_argument('--checkpoint_path', type=str, default="")
 
         self.args = parser.parse_args(raw_args)
         
+        eval_only_models = ["superglue", "cosine", "clip"]
+
         if self.args.mode == "train" or \
         (self.args.mode == "eval" and (self.args.model in eval_only_models)):
             # ignore checkpoint
@@ -161,11 +149,25 @@ class Main():
             else:
                 os.makedirs(results_path)
             self.args.results_path = results_path
-        
+        elif self.args.mode == "eval":
+            if self.args.results_path is None or self.args.results_path == "":
+                split = self.args.checkpoint_path.split("/")
+                idx_results = split.index("results")
+                newsplit = split[:idx_results+2]
+                self.args.results_path = '/'.join(split[:idx_results+2])
+                print("[green]set self.args.results_path", self.args.results_path)
         
         torch.set_grad_enabled(True)
         
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+
+        if self.args.seen_classes == [] and self.args.unseen_classes == []:
+            if self.args.model == "classify":
+                self.args.seen_classes, self.args.unseen_classes = random_seen_unseen_class_split(img_path, seen_split=1.0)
+            else:
+                self.args.seen_classes, self.args.unseen_classes = random_seen_unseen_class_split(img_path)
+
 
         self.model_rgb = True
         if self.args.model in ["superglue", "sift"] or self.args.backbone == "superglue":
@@ -180,14 +182,14 @@ class Main():
             self.val_transform = _transform(224)
         elif self.args.model == "superglue" or self.args.backbone == "superglue":
             # don't normalise. We only evaluate these models
-            self.val_transform = A.Compose([ToTensorV2()])
-            self.train_transform = A.Compose([ToTensorV2()])
+            self.val_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
+            self.train_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
 
         elif self.args.model in eval_only_models:
             #! what other eval_only_models do we have?
             # don't normalise. We only evaluate these models
-            self.val_transform = A.Compose([ToTensorV2()])
-            self.train_transform = A.Compose([ToTensorV2()])
+            self.val_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
+            self.train_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
 
         else:
             val_tf_list = []
@@ -216,6 +218,7 @@ class Main():
             if not self.model_rgb:
                 val_tf_list.append(Grayscale(always_apply=True))
 
+            val_tf_list.append(A.Resize(300, 300)) 
             val_tf_list.append(transform_normalise)
             val_tf_list.append(ToTensorV2())
         
@@ -223,6 +226,7 @@ class Main():
             if not self.model_rgb:
                 train_tf_list.append(Grayscale(always_apply=True))
             
+            train_tf_list.append(A.Resize(300, 300)) 
             train_tf_list.append(transform_normalise)    
             train_tf_list.append(ToTensorV2())
 
@@ -285,11 +289,12 @@ class Main():
 
         elif self.args.model == "classify":
             print("classify model")
-            self.model = ClassifyModel(num_classes=len(seen_classes),
+            self.model = ClassifyModel(num_classes=len(self.args.seen_classes),
                                       batch_size=self.args.batch_size,
                                       learning_rate=self.args.learning_rate,
                                       weight_decay=self.args.weight_decay,
                                       freeze_backbone=self.args.freeze_backbone,
+                                      labels=self.args.seen_classes,
                                       visualise=self.args.visualise)
 
 
@@ -297,7 +302,6 @@ class Main():
         # setup dataloader
         if self.args.model in ["superglue", "sift", "pairwise_classifier", "pairwise_classifier2", "pairwise_classifier3", "cosine", "clip"]:
             self.dl = DataLoaderEvenPairwise(self.args.img_path,
-                                        preprocessing_path=self.args.preprocessing_path,
                                         batch_size=self.args.batch_size,
                                         num_workers=8,
                                         shuffle=True,
@@ -307,7 +311,6 @@ class Main():
                                         val_transform=self.val_transform)
         elif self.args.model in ["triplet"]:
             self.dl = DataLoaderTriplet(self.args.img_path,
-                                        preprocessing_path=self.args.preprocessing_path,
                                         batch_size=self.args.batch_size,
                                         num_workers=8,
                                         shuffle=True,
@@ -318,7 +321,6 @@ class Main():
         
         elif self.args.model in ["classify"]:
             self.dl = DataLoader(self.args.img_path,
-                                        preprocessing_path=self.args.preprocessing_path,
                                         batch_size=self.args.batch_size,
                                         num_workers=8,
                                         shuffle=True,
@@ -362,10 +364,10 @@ class Main():
         logging.info(f"starting training...")
 
         callbacks = [OverrideEpochStepCallback()]
-        checkpoint_callback = ModelCheckpoint(monitor="val/seen_val/loss_epoch", mode="max", save_top_k=1)
+        checkpoint_callback = ModelCheckpoint(monitor="val/seen_val/loss_epoch", mode="min", save_top_k=2)
         callbacks.append(checkpoint_callback)
         if self.args.early_stopping:
-            early_stop_callback = EarlyStopping(monitor="val/seen_val/loss_epoch", mode="max", patience=10, verbose=False, strict=True)
+            early_stop_callback = EarlyStopping(monitor="val/seen_val/loss_epoch", mode="min", patience=50, verbose=False)
             callbacks.append(early_stop_callback)
             
 
@@ -385,7 +387,8 @@ class Main():
                     train_dataloaders=self.dl.dataloaders["seen_train"],
                     val_dataloaders=self.dl.dataloaders["seen_val"])
         
-
+        trainer.save_checkpoint(os.path.join(os.path.dirname(checkpoint_callback.best_model_path), "last.ckpt"))
+        
         logging.info(f"best model path: {checkpoint_callback.best_model_path}")
         logging.info(f"best model score: {checkpoint_callback.best_model_score}")
         print(f"best model path: {checkpoint_callback.best_model_path}")
@@ -398,25 +401,30 @@ class Main():
     def eval(self, model_path=None):
         logging.info(f"[blue]running eval...")
 
-        if model_path is None and self.args.model in ["pairwise_classifier", "pairwise_classifier2", "pairwise_classifier3", "triplet"]:
-            model_path = os.path.join(self.args.results_path, self.args.checkpoint_path)
+        if model_path is None:
+            if self.args.checkpoint_path is None or self.args.checkpoint_path == "":
+                print("[red]: provide checkpoint_path")
+                return
+            model_path = self.args.checkpoint_path
         
         print(f"model_path {model_path}")
         logging.info(f"model_path {model_path}")
 
         if self.args.model == "pw_concat_bce":
             self.model = PwConcatBCEModel.load_from_checkpoint(model_path, strict=False)
-            print("loaded checkpoint!")
+            print("loaded PwConcatBCEModel checkpoint!")
         elif self.args.model == "pw_cos":
             self.model = CosModel.load_from_checkpoint(model_path, strict=False)
-            print("loaded checkpoint!")
+            print("loaded CosModel checkpoint!")
         elif self.args.model == "pw_cos2":
             self.model = Cos2Model.load_from_checkpoint(model_path, strict=False)
-            print("loaded checkpoint!")
+            print("loaded Cos2Model checkpoint!")
         elif self.args.model == "triplet":
             self.model = TripletModel.load_from_checkpoint(model_path, strict=False)
-            print("loaded checkpoint!")
-
+            print("loaded TripletModel checkpoint!")
+        elif self.args.model == "classify":
+            self.model = ClassifyModel.load_from_checkpoint(model_path, strict=False)
+            print("loaded ClassifyModel checkpoint!")
         
         trainer = pl.Trainer(callbacks=[OverrideEpochStepCallback()],
                             default_root_dir=self.args.results_path,
@@ -431,7 +439,7 @@ class Main():
         print("[blue]eval_results:[/blue]")
 
         if self.args.model == "classify":
-            test_datasets = ["seen_train", "seen_val"]
+            test_datasets = ["seen_train", "seen_val", "seen_test"]
         else:
             test_datasets = ["seen_train", "seen_val", "test"]
         self.model.test_datasets = test_datasets
@@ -439,6 +447,44 @@ class Main():
                                   dataloaders=[self.dl.dataloaders[name] for name in test_datasets])
         for i, name in enumerate(test_datasets):
             logging.info(f"eval {name}:" + str(output[i]))
+    
+        if self.args.model == "classify":
+            self.plot_confusion()
+
+
+    def plot_confusion(self):
+
+        print("plotting confusion matrix...")
+
+        y_pred = []
+        y_true = []
+
+        # iterate over test data
+        for inputs, labels, *_ in tqdm(self.dl.dataloaders["seen_train"]):
+                logits = self.model(inputs) # Feed Network
+
+                preds = torch.argmax(logits, dim=1)
+                y_pred.extend(preds) # Save Prediction
+                
+                labels = labels.data.cpu().numpy()
+                y_true.extend(labels) # Save Truth
+
+        # constant for classes
+        classes = self.args.seen_classes
+
+        # Build confusion matrix
+        cf_matrix = confusion_matrix(y_true, y_pred)
+
+        print("classes", len(classes))
+        print("y_true", len(y_true))
+        print("y_pred", len(y_pred))
+        print("cf_matrix", cf_matrix.shape)
+
+        df_cm = pd.DataFrame(cf_matrix / np.sum(cf_matrix, axis=1)[:, None], index = [i for i in classes],
+                            columns = [i for i in classes])
+        plt.figure(figsize = (24,14))
+        sn.heatmap(df_cm, annot=True)
+        plt.savefig(os.path.join(self.args.results_path, "confusion.png"))
 
     # def eval_manual(self):
     #     self.results_path = "experiments/results/2023-03-10__15-28-03"

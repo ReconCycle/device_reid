@@ -10,7 +10,7 @@ import jsonpickle.ext.numpy as jsonpickle_numpy
 from tqdm import tqdm
 import click
 import shutil
-
+from natsort import os_sorted
 print(sys.path)
 
 sys.path.insert(1, os.path.join(sys.path[0], '../vision_pipeline')) # for yolact_pkg
@@ -20,17 +20,19 @@ from vision_pipeline.object_detection_model import ObjectDetectionModel
 from vision_pipeline.object_detection import ObjectDetection
 from vision_pipeline.config import load_config
 
-from context_action_framework.types import Detection, Label, Module, Camera #! USE THE REAL ONE
+from context_action_framework.types import Detection, Label, Module, Camera
 
 
 class Main():
     def __init__(self) -> None:
 
-        self.ignore_labels = []
+        self.ignore_labels = ["wires"]
 
         # load config
-        self.config = load_config("../vision_pipeline/config.yaml")
-        self.config.obj_detection.yolov8_model_file = "/home/sruiz/projects/reconcycle/vision_pipeline/data_limited/yolov8/output_2023-08-25_20000/best.pt" # fix relative path     
+        self.config = load_config(os.path.expanduser("~/vision_pipeline/config.yaml"))
+
+        self.config.obj_detection.debug = False #! don't show debug messages
+        self.config.obj_detection.yolov8_model_file = os.path.expanduser("~/vision_pipeline/data_limited/yolov8/output_2023-08-25_20000/best.pt") # fix relative path     
 
         dataset = None        
         self.cuda = True
@@ -49,7 +51,8 @@ class Main():
         
         self.worksurface_detection = None
 
-        model = ObjectDetectionModel(self.config.obj_detection)
+        # model = ObjectDetectionModel(self.config.obj_detection)
+        model = None
         
         self.object_detection = ObjectDetection(self.config, 
                                                 self.camera_config,
@@ -64,13 +67,11 @@ class Main():
 
 
     def run(self):
-        dataset_dir = "/home/sruiz/datasets2/reconcycle/2023-12-04_hcas_fire_alarms_sorted"
-        cropped_dir = "/home/sruiz/datasets2/reconcycle/2023-12-04_hcas_fire_alarms_sorted_cropped"
-        
-        if os.path.isdir(cropped_dir):
-            print("[red]processed dir already exists!")
+        dataset_dir = os.path.expanduser("~/datasets2/reconcycle/2023-12-04_hcas_fire_alarms_sorted")
+        cropped_dir = os.path.expanduser("~/datasets2/reconcycle/2023-12-04_hcas_fire_alarms_sorted_cropped")
 
         if os.path.isdir(cropped_dir) and os.listdir(cropped_dir):
+            print("[red]processed dir already exists!")
             if click.confirm(f"Do you want to delete {cropped_dir}?", default=True):
                 shutil.rmtree(cropped_dir)
             else:
@@ -81,14 +82,16 @@ class Main():
         os.mkdir(cropped_dir)
         
         subfolders = [ (f.path, f.name) for f in os.scandir(dataset_dir) if f.is_dir() ]
-        for sub_path, sub_name in tqdm(subfolders):
+        subfolders = os_sorted(subfolders)
+
+        for sub_path, sub_name in (pbar := tqdm(subfolders)):
             print("sub_name", sub_name)
             files = [f for f in os.listdir(sub_path) if os.path.isfile(os.path.join(sub_path, f)) and os.path.join(sub_path, f).endswith(('.png', '.jpg', '.jpeg'))]
 
             os.mkdir(os.path.join(cropped_dir, sub_name))
 
             for file in files:
-                print("file", file)
+                pbar.set_description(f"{file}")
                 base_filename = os.path.splitext(file)[0]
                 labelme_file = base_filename + ".json"
                 if os.path.isfile(os.path.join(sub_path, labelme_file)):
@@ -98,9 +101,8 @@ class Main():
                         cv2.imwrite(os.path.join(cropped_dir, sub_name, file), sample_crop)
 
                     else:
-                        print(f"[red]ERROR: {os.path.join(sub_path, labelme_file)}")
+                        print(f"[red]ERROR: crop is None {os.path.join(sub_path, labelme_file)}")
 
-                    print()
                 else:
                     print(f"[red]{sub_path}, {labelme_file}, MISSING!")
             
@@ -147,7 +149,7 @@ class Main():
                     detection.tracking_id = idx
 
                     detection.label = Label[shape['label']]
-                    print("detection.label", detection.label)
+                    # print("detection.label", detection.label)
                     detection.score = float(1.0)
 
                     detection.valid = True
@@ -162,7 +164,7 @@ class Main():
                     detections.append(detection)
                     idx += 1
 
-        detections, markers, poses, graph_img, graph_relations, fps_obb = self.object_detection.get_detections(detections, depth_img=None, worksurface_detection=None, camera_info=None)
+        detections, markers, poses, graph_img, graph_relations, fps_obb = self.object_detection.get_detections(detections, depth_img=None, worksurface_detection=None, camera_info=None, use_classify=False)
 
         return detections, graph_relations
 

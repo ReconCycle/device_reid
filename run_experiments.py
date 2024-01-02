@@ -6,8 +6,13 @@ if __name__ == '__main__':
     # classification
     main = Main(["--mode", "train",
                 "--model", "classify",
-                "--early_stopping", "False",
-                "--freeze_backbone", "False"])
+                "--early_stopping", "True",
+                "--freeze_backbone", "False",
+                "--train_epochs", "600"])
+
+    # main = Main(["--mode", "eval",
+    #             "--model", "classify",
+    #             "--checkpoint_path", "results/2023-12-20__14-56_classify_WORKING_2/lightning_logs/version_0/checkpoints/epoch=544-step=544.ckpt"])
 
     # # SIFT eval
     # Main(["--mode", "train",

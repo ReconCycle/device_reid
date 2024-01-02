@@ -1,6 +1,8 @@
 datasets/
 results/
 
+__pycache__/
+
 temp*
 *.mp4
 

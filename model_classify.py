@@ -14,14 +14,16 @@ import pytorch_lightning as pl
 from torchmetrics import Accuracy
 from torch.nn import functional as F
 
-import exp_utils as exp_utils
+import device_reid.exp_utils as exp_utils
 
 # define the LightningModule
 class ClassifyModel(pl.LightningModule):
-    def __init__(self, num_classes, batch_size, learning_rate, weight_decay, freeze_backbone=True, visualise=False):
+    def __init__(self, num_classes, batch_size, learning_rate, weight_decay, freeze_backbone=True, labels=None, visualise=False):
         super().__init__()
         self.save_hyperparameters() # save paramaters (matching_config) to checkpoint
-        
+
+        self.labels = labels
+        self.num_classes = num_classes
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -66,7 +68,8 @@ class ClassifyModel(pl.LightningModule):
     def backbone(self, sample):
         # print("sample", sample.shape) # shape (batch, 3, 400, 400)
         out = self.backbone_model(sample) # shape (batch, 1000)
-        print("out.shape", out.shape)
+
+        # print("out.shape", out.shape)
         # out = torch.squeeze(out) # shape(batch, 2048)
 
 
@@ -122,7 +125,7 @@ class ClassifyModel(pl.LightningModule):
     def evaluate(self, batch, name, stage=None):
         sample, label, *_  = batch
 
-        print("evaluate sample.shape", sample.shape, sample.get_device())
+        # print("evaluate sample.shape", sample.shape, sample.get_device())
         
         logits = self(sample)
         loss = F.nll_loss(logits, label)
@@ -134,7 +137,7 @@ class ClassifyModel(pl.LightningModule):
         print(f"{stage}/{name} acc:", acc.detach().cpu().numpy())
 
         self.log(f"{stage}/{name}/loss_epoch", loss, on_step=False, on_epoch=True, batch_size=self.batch_size, add_dataloader_idx=False)
-        self.log(f"{stage}/{name}/acc_epoch", acc, on_step=False, on_epoch=True, prog_bar=True, batch_size=self.batch_size, add_dataloader_idx=False)
+        self.log(f"{stage}/{name}/acc_epoch", acc, on_step=False, on_epoch=True, batch_size=self.batch_size, add_dataloader_idx=False)
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         name = dataloader_idx + 1

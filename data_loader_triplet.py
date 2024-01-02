@@ -90,7 +90,6 @@ class DataLoaderTriplet():
     """
     def __init__(self,
                  img_path="MNIST",
-                 preprocessing_path=None,
                  batch_size=256,
                  num_workers=8,
                  shuffle=True,
@@ -108,7 +107,6 @@ class DataLoaderTriplet():
 
         else:
             self.dataloader_imgs = DataLoader(img_path,
-                                         preprocessing_path=preprocessing_path,
                                          batch_size=batch_size,
                                          shuffle=shuffle,
                                          validation_split=validation_split,

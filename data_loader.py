@@ -15,18 +15,29 @@ from rich import print
 import jsonpickle
 import jsonpickle.ext.numpy as jsonpickle_numpy
 import seaborn_image as isns
-
-# do as if we are in the parent directory
-sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from graph_relations import GraphRelations
-from object_reid import ObjectReId
 from exp_utils import scale_img
+# do as if we are in the parent directory
+# from action_predictor.graph_relations import GraphRelations
+# from vision_pipeline.object_reid import ObjectReId
+import device_reid.exp_utils as exp_utils
+import random
+from natsort import os_sorted
 
+
+def random_seen_unseen_class_split(img_path, seen_split=0.5):
+    classes = [ f.name for f in os.scandir(img_path) if f.is_dir() and len(os.listdir(f)) > 0 ]
+    os_sorted(classes)
+    random.seed(42)
+    random.shuffle(classes)
+    split_len = int(np.rint(len(classes)*seen_split))
+
+    seen_classes = os_sorted(classes[:split_len])
+    unseen_classes = os_sorted(classes[split_len:])
+    return seen_classes, unseen_classes
 
 class ImageDataset(datasets.ImageFolder):
     def __init__(self,
                  main_path,
-                 preprocessing_path=None,
                  class_dirs=[],
                  unseen_class_offset=0,
                  transform=None,
@@ -34,12 +45,10 @@ class ImageDataset(datasets.ImageFolder):
                  limit_imgs_per_class=None):
         
         self.main_path = main_path
-        self.preprocessing_path = preprocessing_path
         
         self.class_dirs = class_dirs
         self.unseen_class_offset = unseen_class_offset
         self.exemplar_transform = exemplar_transform
-        
         
         if limit_imgs_per_class is not None:
             print("\n"+"="*20)
@@ -82,47 +91,44 @@ class ImageDataset(datasets.ImageFolder):
             
         label = label + self.unseen_class_offset
 
-        dirname = os.path.basename(os.path.dirname(path))
+        # dirname = os.path.basename(os.path.dirname(path))
         
         # get preprocessed detections for img (if they exist)
-        detections = []
-        if self.preprocessing_path is not None:
+        # detections = []
+        # if self.preprocessing_path is not None:
             
-            filename = os.path.basename(path)
+        # filename = os.path.basename(path)
             
-            file_path = os.path.join(self.preprocessing_path, dirname, filename + ".json")
-            if os.path.isfile(file_path):
+        # file_path = os.path.join(self.preprocessing_path, dirname, filename + ".json")
+        # if os.path.isfile(file_path):
 
-                try:
-                    with open(file_path, 'r') as json_file:
-                        detections = jsonpickle.decode(json_file.read(), keys=True)
-                        
-                except ValueError as e:
-                    print("couldn't read json file properly: ", e)
-            else:
-                print("[red]detection file doesn't exist:" + file_path + "[/red]")
-        
-            graph = GraphRelations(detections)
+        #     try:
+        #         with open(file_path, 'r') as json_file:
+        #             detections = jsonpickle.decode(json_file.read(), keys=True)
+                    
+        #     except ValueError as e:
+        #         print("couldn't read json file properly: ", e)
+        # else:
+        #     print("[red]detection file doesn't exist:" + file_path + "[/red]")
+    
+        # graph = GraphRelations(detections)
 
-            # form groups, adds group_id property to detections
-            graph.make_groups()
-            
-            sample, poly = ObjectReId.find_and_crop_det(sample, graph)
-            
-            # apply albumentations transform
-            sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB) #! do we need this??
-            if isinstance(self.transform, A.Compose):
-                sample = self.transform(image=sample)["image"]
-            else:
-                sample_pil = Image.fromarray(sample)
-                sample = self.transform(sample_pil)
+        # # form groups, adds group_id property to detections
+        # graph.make_groups()
         
+        # sample, poly = ObjectReId.find_and_crop_det(sample, graph)
+        
+        # apply albumentations transform
+        sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB) #! do we need this??
+        if isinstance(self.transform, A.Compose):
+            sample = self.transform(image=sample)["image"]
         else:
-            # for the preprocessing step
-            sample = np.array(sample)
-        
+            sample_pil = Image.fromarray(sample)
+            sample = self.transform(sample_pil)
+
         # if needed we could pass detections and original image too
-        return sample, label, path, poly
+        # return sample, label, path, poly
+        return sample, label, path, None
         
     # restrict classes to those in subfolder_dirs
     def find_classes(self, dir: str):
@@ -136,10 +142,10 @@ class ImageDataset(datasets.ImageFolder):
 class DataLoader():
     def __init__(self,
                  img_path,
-                 preprocessing_path=None,
+                #  preprocessing_path=None,
                  batch_size=16,
                  num_workers=8,
-                 validation_split=.2,
+                 validation_split=.1,
                  shuffle=True,
                  seen_classes=[],
                  unseen_classes=[],
@@ -162,8 +168,6 @@ class DataLoader():
 
         self.dataloader_imgs = self # hack for being able to call dataloader_imgs.visualise
 
-
-
         # train_tf_dataset = datasets.StanfordCars(root="/home/sruiz/datasets2", 
         #                                         split="train", 
         #                                         download=True, 
@@ -176,14 +180,12 @@ class DataLoader():
                 
         #! note the only difference is the transform!
         train_tf_dataset = ImageDataset(img_path,
-                                    preprocessing_path,
-                                    self.seen_dirs,
+                                    class_dirs=self.seen_dirs,
                                     transform=train_transform,
                                     limit_imgs_per_class=limit_imgs_per_class)
     
         val_tf_dataset = ImageDataset(img_path,
-                                    preprocessing_path,
-                                    self.seen_dirs,
+                                    class_dirs=self.seen_dirs,
                                     transform=val_transform,
                                     limit_imgs_per_class=limit_imgs_per_class)
         
@@ -191,7 +193,7 @@ class DataLoader():
 
         # create seen train/val/test split
         generator = torch.Generator().manual_seed(random_seed)
-        len_seen_train = int((1.0 - 2*validation_split) * len_dataset) # 0.6/0.2/0.2 split
+        len_seen_train = int((1.0 - 2*validation_split) * len_dataset) # 0.8/0.1/0.1 split
         len_seen_val = int(validation_split * len_dataset)
         len_seen_test = len_dataset - len_seen_train - len_seen_val
 
@@ -207,21 +209,37 @@ class DataLoader():
         self.datasets["seen_test"] = torch.utils.data.Subset(val_tf_dataset, seen_test_idxs)
 
         # add unseen dataset
-        self.datasets["unseen_test"] = ImageDataset(img_path,
-                                                preprocessing_path,
-                                                self.unseen_dirs,
-                                                unseen_class_offset=len(train_tf_dataset.classes),
-                                                transform=val_transform,
-                                                limit_imgs_per_class=limit_imgs_per_class)
+        if len(self.unseen_dirs) > 0:
+            self.datasets["unseen_test"] = ImageDataset(img_path,
+                                                    # preprocessing_path,
+                                                    class_dirs=self.unseen_dirs,
+                                                    unseen_class_offset=len(train_tf_dataset.classes),
+                                                    transform=val_transform,
+                                                    limit_imgs_per_class=limit_imgs_per_class)
+        else:
+            self.datasets["unseen_test"] = None
         
         # concat seen_test and unseen_test datasets
-        self.datasets["test"] = torch.utils.data.ConcatDataset([self.datasets["seen_test"], self.datasets["unseen_test"]])
+        if len(self.unseen_dirs) > 0:
+            self.datasets["test"] = torch.utils.data.ConcatDataset([self.datasets["seen_test"], self.datasets["unseen_test"]])
+        else:
+            self.datasets["test"] = self.datasets["seen_test"]
         
-        self.datasets["all"] = torch.utils.data.ConcatDataset([
-            self.datasets["seen_train"], 
-            self.datasets["seen_val"], 
-            self.datasets["seen_test"], 
-            self.datasets["unseen_test"]])
+        if len(self.unseen_dirs) > 0:
+            self.datasets["all"] = torch.utils.data.ConcatDataset([
+                self.datasets["seen_train"], 
+                self.datasets["seen_val"], 
+                self.datasets["seen_test"], 
+                self.datasets["unseen_test"]])
+        else:
+            self.datasets["all"] = torch.utils.data.ConcatDataset([
+                self.datasets["seen_train"], 
+                self.datasets["seen_val"], 
+                self.datasets["seen_test"]])
+            
+        dataset_list = ["seen_train", "seen_val", "seen_test", "test"]
+        if len(self.unseen_dirs) > 0:
+            dataset_list.append("unseen_test")
 
         # create the dataloaders
         # todo: fix bug, either requiring: generator=torch.Generator(device='cuda'),
@@ -251,84 +269,96 @@ class DataLoader():
 
             return batch
         
-        
         self.dataloaders = {x: torch.utils.data.DataLoader(self.datasets[x],
                                                            num_workers=num_workers,
                                                            batch_size=batch_size,
                                                         #    generator=generator,
                                                            shuffle=shuffle,
                                                            collate_fn=custom_collate)
-                            for x in ["seen_train", "seen_val", "seen_test", "unseen_test", "test"]}
+                            for x in dataset_list}
         
-        self.dataset_lens = {x: len(self.datasets[x]) for x in ["seen_train", "seen_val", "seen_test", "unseen_test", "test"]}
+        self.dataset_lens = {x: len(self.datasets[x]) for x in dataset_list}
         
-        self.classes = {
-            "seen_train": train_tf_dataset.classes,
-            "seen_val": train_tf_dataset.classes,
-            "seen_test": train_tf_dataset.classes,
-            "unseen_test": self.datasets["unseen_test"].classes,
-            "test": np.concatenate((train_tf_dataset.classes, self.datasets["unseen_test"].classes)),
-            "all": np.concatenate((train_tf_dataset.classes, self.datasets["unseen_test"].classes))
-        }
+        if len(self.unseen_dirs) > 0:
+            self.classes = {
+                "seen_train": train_tf_dataset.classes,
+                "seen_val": train_tf_dataset.classes,
+                "seen_test": train_tf_dataset.classes,
+                "unseen_test": self.datasets["unseen_test"].classes,
+                "test": np.concatenate((train_tf_dataset.classes, self.datasets["unseen_test"].classes)),
+                "all": np.concatenate((train_tf_dataset.classes, self.datasets["unseen_test"].classes))
+            }
+        else:
+            self.classes = {
+                "seen_train": train_tf_dataset.classes,
+                "seen_val": train_tf_dataset.classes,
+                "seen_test": train_tf_dataset.classes,
+                "test": train_tf_dataset.classes,
+                "all": train_tf_dataset.classes
+            }
         
     def visualise(self, type_name, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], save_path=None):
 
         #! This seems broken when dataloader is on cuda!
-        for i, (sample, labels, path, detections) in enumerate(self.dataloaders[type_name]):
+        dl_iter = iter(self.dataloaders[type_name])
+        
+        sample, labels, path, detections = next(dl_iter)
             
-            if mean is None or std is None:
-                samples_denorm = sample
-            else:
-                mean = np.array(mean)
-                std = np.array(std)
+        # for i, (sample, labels, path, detections) in enumerate(self.dataloaders[type_name]):
+            
+        if mean is None or std is None:
+            samples_denorm = sample
+        else:
+            mean = np.array(mean)
+            std = np.array(std)
 
-                samples_denorm = []
-                for sample_img in sample:
-                    # undo ToTensorV2
-                    
-                    # CHW -> HWC
-                    # Images must be in HWC format, not in CHW
-                    sample_np = sample_img.cpu().numpy()
-                    sample_np = sample_np.transpose(1, 2, 0) # W and H might be wrong way around
+            samples_denorm = []
+            for sample_img in sample:
+                # undo ToTensorV2
+                
+                # CHW -> HWC
+                # Images must be in HWC format, not in CHW
+                sample_np = sample_img.cpu().numpy()
+                sample_np = sample_np.transpose(1, 2, 0) # W and H might be wrong way around
 
-                    # undo normalize
-                    denorm = A.Normalize(
-                        mean=[-m / s for m, s in zip(mean, std)],
-                        std=[1.0 / s for s in std],
-                        always_apply=True,
-                        max_pixel_value=1.0
-                    )
-                    sample_denorm = denorm(image=sample_np)["image"]
+                # undo normalize
+                denorm = A.Normalize(
+                    mean=[-m / s for m, s in zip(mean, std)],
+                    std=[1.0 / s for s in std],
+                    always_apply=True,
+                    max_pixel_value=1.0
+                )
+                sample_denorm = denorm(image=sample_np)["image"]
 
-                    # to view with opencv we convert to BGR
-                    print("sample_denorm.shape", sample_denorm.shape)
-                    sample_denorm = cv2.cvtColor(sample_denorm, cv2.COLOR_RGB2BGR)
+                # to view with opencv we convert to BGR
+                # print("sample_denorm.shape", sample_denorm.shape)
+                sample_denorm = cv2.cvtColor(sample_denorm, cv2.COLOR_RGB2BGR)
 
-                    # cv2.imshow("sample_denorm", sample_denorm)
-                    # k = cv2.waitKey(0)
+                # cv2.imshow("sample_denorm", sample_denorm)
+                # k = cv2.waitKey(0)
 
-                    # we convert back to python format to view in grid
-                    # HWC -> CHW
-                    sample_denorm = sample_denorm.transpose(2, 0, 1)
-                    sample_denorm = torch.from_numpy(sample_denorm)
+                # we convert back to python format to view in grid
+                # HWC -> CHW
+                sample_denorm = sample_denorm.transpose(2, 0, 1)
+                sample_denorm = torch.from_numpy(sample_denorm)
 
-                    samples_denorm.append(sample_denorm)
+                samples_denorm.append(sample_denorm)
 
-            # create grid
-            img_grid = make_grid(samples_denorm)
-            img_grid = transforms.ToPILImage()(img_grid)
-            img_grid = np.array(img_grid)
+        # create grid
+        img_grid = make_grid(samples_denorm)
+        img_grid = transforms.ToPILImage()(img_grid)
+        img_grid = np.array(img_grid)
 
-            if save_path is not None:
-                cv2.imwrite(os.path.join(save_path, f"train_{i}.jpg"), img_grid)
+        if save_path is not None:
+            cv2.imwrite(os.path.join(save_path, f"train.jpg"), img_grid)
 
-            else:
-                # show grid
-                cv2.imshow("img_grid", scale_img(img_grid))
-                k = cv2.waitKey(0)
+        # show grid
+        # cv2.imshow("img_grid", scale_img(img_grid))
+        # k = cv2.waitKey(0)
+        
+        scaled_img_grid = scale_img(img_grid)
+        return scaled_img_grid
 
-            if i > 2:
-                break
 
 
 
@@ -418,12 +448,10 @@ class DataLoader():
         
 if __name__ == '__main__':
     print("Run this for testing the dataloader only.")
-    # img_path = "/home/sruiz/datasets2/reconcycle/simon_rgbd_dataset/hca_simon/sorted_in_folders"
-    # img_path = "experiments/datasets/hca_simon/sorted_in_folders"
-    img_path = "experiments/datasets/2023-02-20_hca_backs"
-    preprocessing_path = "experiments/datasets/2023-02-20_hca_backs_preprocessing_opencv"
-    seen_classes = ["hca_0", "hca_1", "hca_2", "hca_2a", "hca_3", "hca_4", "hca_5", "hca_6"]
-    unseen_classes = ["hca_7", "hca_8", "hca_9", "hca_10", "hca_11", "hca_11a", "hca_12"]
+    img_path = "~/datasets2/reconcycle/2023-12-04_hcas_fire_alarms_sorted_cropped"
+    
+    seen_classes = ["hca_front_00", "hca_front_01", "hca_front_02", "hca_front_03", "hca_front_04", "hca_front_05", "hca_front_06", "hca_front_07"]
+    unseen_classes = ["hca_front_08", "hca_front_09", "hca_front_10", "hca_front_11", "hca_front_12", "hca_front_13", "hca_front_14"]
 
     transform_list = [
             A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.25, rotate_limit=45, p=0.5),
@@ -452,7 +480,6 @@ if __name__ == '__main__':
     train_transform = A.Compose(transform_list)
 
     dataloader = DataLoader(img_path,
-                            preprocessing_path=preprocessing_path,
                             seen_classes=seen_classes,
                             unseen_classes=unseen_classes,
                             train_transform=train_transform,
