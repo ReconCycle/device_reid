@@ -130,6 +130,12 @@ class Main():
         labels = [Label.hca_front, Label.hca_back, Label.firealarm_front, Label.firealarm_back]
         sample_crop, poly = ObjectReId.find_and_crop_det(sample, graph_relations, labels=labels, size=size)
 
+        if size == 300:
+            # upscale to 600
+            print("upscaling!", sample.shape[0], sub_path)
+            sample_crop = cv2.resize(sample_crop, (600, 600), interpolation=cv2.INTER_AREA)
+
+
         return sample_crop
 
     #! this function is also used in vision_pipeline/llm_data_generator
