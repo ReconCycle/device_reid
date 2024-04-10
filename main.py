@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 # import json
 from rich import print
-from PIL import Image
 from tqdm import tqdm
 import logging
 import torch
@@ -25,7 +24,7 @@ import pandas as pd
 import argparse
 
 import exp_utils as exp_utils
-from exp_utils import str2bool
+from exp_utils import str2bool, clip_transform
 
 from data_loader import DataLoader, random_seen_unseen_class_split
 from data_loader_even_pairwise import DataLoaderEvenPairwise
@@ -53,26 +52,6 @@ from model_classify import ClassifyModel
 
 from superglue_training.models.matching import Matching    
 
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
-try:
-    from torchvision.transforms import InterpolationMode
-    BICUBIC = InterpolationMode.BICUBIC
-except ImportError:
-    BICUBIC = Image.BICUBIC
-
-# from CLIP
-def _convert_image_to_rgb(image):
-    return image.convert("RGB")
-
-# from CLIP
-def _transform(n_px):
-    return Compose([
-        Resize(n_px, interpolation=BICUBIC),
-        CenterCrop(n_px),
-        _convert_image_to_rgb,
-        ToTensor(),
-        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
-    ])
 
 # TODO: get grayscale working for superglue
 class Grayscale(ImageOnlyTransform):
@@ -110,7 +89,7 @@ class Main():
         parser.add_argument('--backbone', type=str, default=None) # resnet_imagenet, clip, superglue
         parser.add_argument('--visualise', type=str2bool, default=False)
         parser.add_argument('--cutoff', type=float, default=0.01) # SIFT=0.01, superglue=0.5
-        parser.add_argument('--batch_size', type=int, default=16)
+        parser.add_argument('--batch_size', type=int, default=64)
         parser.add_argument('--batches_per_epoch', type=int, default=10) #! was 300, for debugging 10
         parser.add_argument('--train_epochs', type=int, default=50)
         parser.add_argument('--eval_epochs', type=int, default=1)
@@ -178,8 +157,8 @@ class Main():
 
         if self.args.model == "clip" or self.args.backbone == "clip":
             print("\n[blue]Using special CLIP transform!!!!!!!!!!!!!\n")
-            self.train_transform = _transform(224)
-            self.val_transform = _transform(224)
+            self.train_transform = clip_transform(224)
+            self.val_transform = clip_transform(224)
         elif self.args.model == "superglue" or self.args.backbone == "superglue":
             # don't normalise. We only evaluate these models
             self.val_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
@@ -359,6 +338,13 @@ class Main():
         print(f"model: {self.model}")
         logging.info(f"model: {self.model}")
 
+        # dataset split and size:
+        logging.info(f"dataset sizes:\nseen_train: {len(self.dl.dataloaders['seen_train'])}\nseen_val: {len(self.dl.dataloaders['seen_val'])}\nseen_test: {len(self.dl.dataloaders['seen_test'])}\ntest: {len(self.dl.dataloaders['test'])}")
+
+        logging.info(f"dataset lens: {self.dl.dataset_lens}")
+
+        logging.info(f"classes: {self.dl.classes}")
+
     def train(self):
         
         logging.info(f"starting training...")
@@ -367,7 +353,8 @@ class Main():
         checkpoint_callback = ModelCheckpoint(monitor="val/seen_val/loss_epoch", mode="min", save_top_k=2)
         callbacks.append(checkpoint_callback)
         if self.args.early_stopping:
-            early_stop_callback = EarlyStopping(monitor="val/seen_val/loss_epoch", mode="min", patience=50, verbose=False)
+            early_stop_callback = EarlyStopping(monitor="val/seen_val/loss_epoch", mode="min", patience=20, min_delta=0.01, verbose=False)
+            # early_stop_callback = EarlyStopping(monitor="val/seen_val/acc_epoch", mode="max", patience=20, verbose=False)
             callbacks.append(early_stop_callback)
             
 

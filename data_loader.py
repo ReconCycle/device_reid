@@ -22,6 +22,7 @@ from exp_utils import scale_img
 import device_reid.exp_utils as exp_utils
 import random
 from natsort import os_sorted
+from sklearn.model_selection import train_test_split
 
 
 def random_seen_unseen_class_split(img_path, seen_split=0.5):
@@ -146,6 +147,7 @@ class DataLoader():
                  batch_size=16,
                  num_workers=8,
                  validation_split=.1,
+                 combine_val_and_test=False,
                  shuffle=True,
                  seen_classes=[],
                  unseen_classes=[],
@@ -192,20 +194,54 @@ class DataLoader():
         len_dataset = len(train_tf_dataset)
 
         # create seen train/val/test split
-        generator = torch.Generator().manual_seed(random_seed)
-        len_seen_train = int((1.0 - 2*validation_split) * len_dataset) # 0.8/0.1/0.1 split
-        len_seen_val = int(validation_split * len_dataset)
-        len_seen_test = len_dataset - len_seen_train - len_seen_val
+        
 
-        seen_train_idxs, seen_val_idxs, seen_test_idxs = torch.utils.data.random_split(
-            np.arange(len_dataset),
-            (len_seen_train, len_seen_val, len_seen_test),
-            generator=generator
-        )
+
+        # TODO: use sklearn split to get balanced set
+        # TODO: sklearn.model_selection.train_test_split
+        # TODO: use stratify
+        #! --- START new split code
+
+        train_ratio = 1.0 - 2 * validation_split
+        validation_ratio = validation_split
+        if combine_val_and_test:
+            validation_ratio = 0
+            test_ratio = 2 * validation_split
+        else:
+            validation_ratio = validation_split
+            test_ratio = validation_split
+
+        # train is now 75% of the entire data set
+        seen_train_idxs, seen_test_idxs = train_test_split(np.arange(len_dataset), test_size=1 - train_ratio)
+
+        if validation_ratio > 0:
+            # test is now 10% of the initial data set
+            # validation is now 15% of the initial data set
+            seen_val_idxs, seen_test_idxs = train_test_split(seen_test_idxs, test_size=test_ratio/(test_ratio + validation_ratio))
+
+        #! --- END new split code
+
+
+        #! --- START OLD CODE
+        # len_seen_train = int((1.0 - 2*validation_split) * len_dataset) # 0.8/0.1/0.1 split
+        # len_seen_val = int(validation_split * len_dataset)
+        # len_seen_test = len_dataset - len_seen_train - len_seen_val
+
+        # generator = torch.Generator().manual_seed(random_seed)
+        # seen_train_idxs, seen_val_idxs, seen_test_idxs = torch.utils.data.random_split(
+        #     np.arange(len_dataset),
+        #     (len_seen_train, len_seen_val, len_seen_test),
+        #     generator=generator
+        # )
+        #! --- END OLD CODE
 
         self.datasets = {}
         self.datasets["seen_train"] = torch.utils.data.Subset(train_tf_dataset, seen_train_idxs)
-        self.datasets["seen_val"] = torch.utils.data.Subset(val_tf_dataset, seen_val_idxs)
+        if not combine_val_and_test:
+            self.datasets["seen_val"] = torch.utils.data.Subset(val_tf_dataset, seen_val_idxs)
+        else:
+            self.datasets["seen_val"] = None
+
         self.datasets["seen_test"] = torch.utils.data.Subset(val_tf_dataset, seen_test_idxs)
 
         # add unseen dataset
@@ -225,21 +261,16 @@ class DataLoader():
         else:
             self.datasets["test"] = self.datasets["seen_test"]
         
-        if len(self.unseen_dirs) > 0:
-            self.datasets["all"] = torch.utils.data.ConcatDataset([
-                self.datasets["seen_train"], 
-                self.datasets["seen_val"], 
-                self.datasets["seen_test"], 
-                self.datasets["unseen_test"]])
-        else:
-            self.datasets["all"] = torch.utils.data.ConcatDataset([
-                self.datasets["seen_train"], 
-                self.datasets["seen_val"], 
-                self.datasets["seen_test"]])
-            
-        dataset_list = ["seen_train", "seen_val", "seen_test", "test"]
-        if len(self.unseen_dirs) > 0:
-            dataset_list.append("unseen_test")
+        dataset_list = []
+        dataset_name_list = []
+        dataset_name_list_all = ["seen_train", "seen_val", "seen_test", "test", "unseen_test"]
+        
+        for dataset_name in dataset_name_list_all:
+            if self.datasets[dataset_name] is not None:
+                dataset_name_list.append(dataset_name)
+                dataset_list.append(self.datasets[dataset_name])
+
+        self.datasets["all"] = torch.utils.data.ConcatDataset([dataset_list])
 
         # create the dataloaders
         # todo: fix bug, either requiring: generator=torch.Generator(device='cuda'),
@@ -275,24 +306,26 @@ class DataLoader():
                                                         #    generator=generator,
                                                            shuffle=shuffle,
                                                            collate_fn=custom_collate)
-                            for x in dataset_list}
+                            for x in dataset_name_list}
         
-        self.dataset_lens = {x: len(self.datasets[x]) for x in dataset_list}
-        
+        self.dataset_lens = {x: len(self.datasets[x]) for x in dataset_name_list}
+
         if len(self.unseen_dirs) > 0:
             self.classes = {
-                "seen_train": train_tf_dataset.classes,
-                "seen_val": train_tf_dataset.classes,
-                "seen_test": train_tf_dataset.classes,
+                "seen": train_tf_dataset.classes,
+                # "seen_train": train_tf_dataset.classes,
+                # "seen_val": train_tf_dataset.classes,
+                # "seen_test": train_tf_dataset.classes,
                 "unseen_test": self.datasets["unseen_test"].classes,
                 "test": np.concatenate((train_tf_dataset.classes, self.datasets["unseen_test"].classes)),
                 "all": np.concatenate((train_tf_dataset.classes, self.datasets["unseen_test"].classes))
             }
         else:
             self.classes = {
-                "seen_train": train_tf_dataset.classes,
-                "seen_val": train_tf_dataset.classes,
-                "seen_test": train_tf_dataset.classes,
+                "seen": train_tf_dataset.classes,
+                # "seen_train": train_tf_dataset.classes,
+                # "seen_val": train_tf_dataset.classes,
+                # "seen_test": train_tf_dataset.classes,
                 "test": train_tf_dataset.classes,
                 "all": train_tf_dataset.classes
             }
