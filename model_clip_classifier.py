@@ -63,7 +63,20 @@ print(f"seen classes: {dl.classes['seen']}")
 print(f"num classes: {num_classes}")
 
 
+parent_class_names = ["firealarm_back", "firealarm_front", "hca_back", "hca_front", "firealarm_inside"]
+num_parent_classes = len(parent_class_names)
 
+parent_classes_lookup = np.zeros(num_classes, dtype=int)
+for index, a_class in enumerate(dl.classes['seen']):
+    possible_parent_ids = [idx for idx, s in enumerate(parent_class_names) if s in a_class]
+    if len(possible_parent_ids) > 0:
+        parent_classes_lookup[index] = possible_parent_ids[0]
+    else:
+        # if parent class doesn't exist, call it -1
+        parent_classes_lookup[index] = -1
+
+
+print("parent_classes_lookup", parent_classes_lookup)
 
 #%%
 
@@ -186,12 +199,16 @@ print("test_topk_pred_labels", test_topk_pred_labels.shape)
 def compute_acc(k=1):
     items_per_class = np.zeros(num_classes)
     acc_class = np.zeros(num_classes)
+    items_per_parent_class = np.zeros(num_parent_classes)
+    acc_parent_class = np.zeros(num_parent_classes)
     acc = 0
     for gt_label, topk_pred_label in zip(test_gt_labels, test_topk_pred_labels):
         items_per_class[gt_label] += 1 # count number of items in that class
+        items_per_parent_class[parent_classes_lookup[gt_label]] += 1 # count number of items in parent class
         if gt_label in topk_pred_label[:k]:
             acc += 1
             acc_class[gt_label] += 1
+            acc_parent_class[parent_classes_lookup[gt_label]] += 1
 
     acc = acc / test_gt_labels.size(dim=0)
 
@@ -199,23 +216,66 @@ def compute_acc(k=1):
     for idx in np.arange(num_classes):
         acc_class[idx] = acc_class[idx] / items_per_class[idx]
 
+    # divide by the number of items in that parent class
+    for idx in np.arange(num_parent_classes):
+        acc_parent_class[idx] = acc_parent_class[idx] / items_per_parent_class[idx]
+
     print("items_per_class", items_per_class)
+    print("items_per_parent_class", items_per_parent_class)
 
-    return acc, acc_class
+    # we want the distribution of classes in the top-k, for each ground truth class
+    topk_dist_foreach_class = []
+    for class_id in np.arange(num_classes):
+        topk_for_class = [topk_pred_label for gt_label, topk_pred_label in  zip(test_gt_labels, test_topk_pred_labels) if gt_label == class_id]
+        if len(topk_for_class) > 0:
+            topk_for_class = torch.stack(topk_for_class, dim=0)
+            # print("topk_for_class", topk_for_class)
+            # print(f"topk_for_class {class_id}", topk_for_class.shape)
 
-acc1, acc1_class = compute_acc(k=1)
+            topk_dist_foreach_class.append(topk_for_class)
+        else:
+            topk_dist_foreach_class.append(None)
+
+
+    return acc, acc_class, acc_parent_class, topk_dist_foreach_class
+
+print("parent_class_names", parent_class_names)
+
+acc1, acc1_class, acc1_parent_class, _ = compute_acc(k=1)
 print("top-1 acc", acc1) # 0.935
 print("acc1_class", acc1_class)
+print("acc1_parent_class", acc1_parent_class)
 
-acc3, acc3_class = compute_acc(k=3)
+acc3, acc3_class, acc3_parent_class, top3_dist_foreach_class = compute_acc(k=3)
 print("top-3 acc", acc3)
 print("acc3_class", acc3_class)
+print("acc3_parent_class", acc3_parent_class)
 
-acc5, acc5_class = compute_acc(k=5)
+acc5, acc5_class, acc5_parent_class, top5_dist_foreach_class = compute_acc(k=5)
 print("top-5 acc", acc5)
 print("acc5_class", acc5_class)
+print("acc5_parent_class", acc5_parent_class)
 
 # %%
-# TODO: per class accuracy
+from collections import Counter
 
+dist = top5_dist_foreach_class[-1] #! specify index for each g.t. class
+dist_flat = torch.flatten(dist).numpy()
+count = Counter(dist_flat)
+count_sorted = sorted(count.items(), key=lambda item: item[1], reverse=True)
+count_sorted_freq = [(key, val/len(dist_flat)) for (key, val) in count_sorted]
+
+cum_dict = {}
+
+fig, ax = plt.subplots()
+
+x, y = zip(*count_sorted_freq)
+x = [str(x_item) for x_item in x]
+ax.bar(x, y)
+ax.set_title(f"distribution top5, for class ??")
+ax.set_ylabel('frequency')
+ax.set_xlabel('class')
+plt.show()
+
+# TODO: show image of class on each column
 # %%

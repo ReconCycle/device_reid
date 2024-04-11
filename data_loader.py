@@ -13,6 +13,7 @@ import regex as re
 from tqdm import tqdm
 from rich import print
 import jsonpickle
+import pandas as pd
 import jsonpickle.ext.numpy as jsonpickle_numpy
 import seaborn_image as isns
 from exp_utils import scale_img
@@ -170,15 +171,6 @@ class DataLoader():
 
         self.dataloader_imgs = self # hack for being able to call dataloader_imgs.visualise
 
-        # train_tf_dataset = datasets.StanfordCars(root="/home/sruiz/datasets2", 
-        #                                         split="train", 
-        #                                         download=True, 
-        #                                         transform=train_transform)
-        
-        # val_tf_dataset = datasets.StanfordCars(root="/home/sruiz/datasets2", 
-        #                                         split="test",
-        #                                         download=True,
-        #                                         transform=val_transform)
                 
         #! note the only difference is the transform!
         train_tf_dataset = ImageDataset(img_path,
@@ -193,35 +185,39 @@ class DataLoader():
         
         len_dataset = len(train_tf_dataset)
 
+        all_labels = [x[1] for x in train_tf_dataset.samples]
+
+        #####################################
         # create seen train/val/test split
-        
+        # we use pandas sample to get even samples in the val and test set
+        #####################################
+        df = pd.DataFrame(data=all_labels, columns=["labels"])
 
+        def round_to_multiple(number, multiple):
+            return int(multiple * round(number / multiple))
 
-        # TODO: use sklearn split to get balanced set
-        # TODO: sklearn.model_selection.train_test_split
-        # TODO: use stratify
-        #! --- START new split code
+        # approximate group size based on validation_split
+        grouped_size = (df.size * 2 * validation_split) / len(self.seen_dirs)
+        grouped_size = round_to_multiple(grouped_size, 2)
 
-        train_ratio = 1.0 - 2 * validation_split
-        validation_ratio = validation_split
+        print("grouped_size", grouped_size)
+
+        df_test_sampled = df.groupby('labels').sample(n=int(grouped_size/2))
+        df2 = df.drop(df_test_sampled.index.values)
+        seen_test_idxs = df_test_sampled.index.values
+        df_val_sampled = df2.groupby('labels').sample(n=int(grouped_size/2))
+        df3 = df2.drop(df_val_sampled.index.values)
+
+        seen_train_idxs = df3.index.values
+        seen_val_idxs = df_val_sampled.index.values
+
         if combine_val_and_test:
-            validation_ratio = 0
-            test_ratio = 2 * validation_split
-        else:
-            validation_ratio = validation_split
-            test_ratio = validation_split
-
-        # train is now 75% of the entire data set
-        seen_train_idxs, seen_test_idxs = train_test_split(np.arange(len_dataset), test_size=1 - train_ratio)
-
-        if validation_ratio > 0:
-            # test is now 10% of the initial data set
-            # validation is now 15% of the initial data set
-            seen_val_idxs, seen_test_idxs = train_test_split(seen_test_idxs, test_size=test_ratio/(test_ratio + validation_ratio))
-
-        #! --- END new split code
-
-
+            seen_test_idxs = np.concatenate((seen_test_idxs, seen_val_idxs), axis=0)
+            seen_val_idxs = []
+        #####################################
+        # end split
+        #####################################
+        
         #! --- START OLD CODE
         # len_seen_train = int((1.0 - 2*validation_split) * len_dataset) # 0.8/0.1/0.1 split
         # len_seen_val = int(validation_split * len_dataset)
