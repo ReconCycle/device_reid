@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"]="5" #! specify gpu here
+os.environ["CUDA_VISIBLE_DEVICES"]="1" #! specify gpu here
 from main import Main
 
 if __name__ == '__main__':

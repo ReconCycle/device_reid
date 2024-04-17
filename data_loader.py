@@ -157,7 +157,8 @@ class DataLoader():
                  limit_imgs_per_class=None,
                  cuda=True):
         
-        random_seed= 42
+        random_seed = 42
+        np.random.seed(random_seed)
         
         self.img_path = img_path
         self.batch_size = batch_size
@@ -183,9 +184,25 @@ class DataLoader():
                                     transform=val_transform,
                                     limit_imgs_per_class=limit_imgs_per_class)
         
-        len_dataset = len(train_tf_dataset)
-
         all_labels = [x[1] for x in train_tf_dataset.samples]
+        num_seen_classes = len(set(all_labels))
+        print("num_seen_classes", num_seen_classes)
+
+        #####################################
+        # create list of template images
+        #####################################
+
+        template_imgs = [None] * num_seen_classes
+        for img_path, label in train_tf_dataset.samples:
+            if "template" in img_path:
+                template_imgs[label] = img_path
+
+        # if a random image if some classes don't have a template image
+        for img_path, label in train_tf_dataset.samples:
+            if template_imgs[label] is None:
+                template_imgs[label] = img_path
+
+        self.template_imgs = template_imgs
 
         #####################################
         # create seen train/val/test split
@@ -202,10 +219,10 @@ class DataLoader():
 
         print("grouped_size", grouped_size)
 
-        df_test_sampled = df.groupby('labels').sample(n=int(grouped_size/2))
+        df_test_sampled = df.groupby('labels').sample(n=int(grouped_size/2), random_state=random_seed)
         df2 = df.drop(df_test_sampled.index.values)
         seen_test_idxs = df_test_sampled.index.values
-        df_val_sampled = df2.groupby('labels').sample(n=int(grouped_size/2))
+        df_val_sampled = df2.groupby('labels').sample(n=int(grouped_size/2), random_state=random_seed)
         df3 = df2.drop(df_val_sampled.index.values)
 
         seen_train_idxs = df3.index.values
