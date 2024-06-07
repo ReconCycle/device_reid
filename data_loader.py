@@ -24,6 +24,7 @@ import device_reid.exp_utils as exp_utils
 import random
 from natsort import os_sorted
 from sklearn.model_selection import train_test_split
+from dataset_rotations import ImageDatasetRotations
 
 
 def random_seen_unseen_class_split(img_path, seen_split=0.5):
@@ -47,6 +48,8 @@ class ImageDataset(datasets.ImageFolder):
                  limit_imgs_per_class=None):
         
         self.main_path = main_path
+
+        print("main_path", main_path)
         
         self.class_dirs = class_dirs
         self.unseen_class_offset = unseen_class_offset
@@ -92,33 +95,6 @@ class ImageDataset(datasets.ImageFolder):
             label = self.target_transform(label)
             
         label = label + self.unseen_class_offset
-
-        # dirname = os.path.basename(os.path.dirname(path))
-        
-        # get preprocessed detections for img (if they exist)
-        # detections = []
-        # if self.preprocessing_path is not None:
-            
-        # filename = os.path.basename(path)
-            
-        # file_path = os.path.join(self.preprocessing_path, dirname, filename + ".json")
-        # if os.path.isfile(file_path):
-
-        #     try:
-        #         with open(file_path, 'r') as json_file:
-        #             detections = jsonpickle.decode(json_file.read(), keys=True)
-                    
-        #     except ValueError as e:
-        #         print("couldn't read json file properly: ", e)
-        # else:
-        #     print("[red]detection file doesn't exist:" + file_path + "[/red]")
-    
-        # graph = GraphRelations(detections)
-
-        # # form groups, adds group_id property to detections
-        # graph.make_groups()
-        
-        # sample, poly = ObjectReId.find_and_crop_det(sample, graph)
         
         # apply albumentations transform
         sample = cv2.cvtColor(sample, cv2.COLOR_BGR2RGB) #! do we need this??
@@ -130,12 +106,16 @@ class ImageDataset(datasets.ImageFolder):
 
         # if needed we could pass detections and original image too
         # return sample, label, path, poly
-        return sample, label, path, None
+        return sample, label, path, []
         
     # restrict classes to those in subfolder_dirs
     def find_classes(self, dir: str):
-        classes = [d.name for d in os.scandir(dir) if d.is_dir() and d.name in self.class_dirs]
-        classes.sort()
+        if os.path.isdir(dir):
+            classes = [d.name for d in os.scandir(dir) if d.is_dir() and d.name in self.class_dirs]
+            classes.sort()
+        else:
+            print("[red]not a dir!", dir)
+            classes = []
         # print("Directories in this dataset:", classes)
         class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
         return classes, class_to_idx
@@ -155,7 +135,8 @@ class DataLoader():
                  train_transform=None,
                  val_transform=None,
                  limit_imgs_per_class=None,
-                 cuda=True):
+                 cuda=True,
+                 use_dataset_rotations=False):
         
         random_seed = 42
         np.random.seed(random_seed)
@@ -172,14 +153,18 @@ class DataLoader():
 
         self.dataloader_imgs = self # hack for being able to call dataloader_imgs.visualise
 
+        ChosenDatasetClass = ImageDataset
+        if use_dataset_rotations:
+            print("[red]*WARNING* Using use_dataset_rotations True")
+            ChosenDatasetClass = ImageDatasetRotations
                 
         #! note the only difference is the transform!
-        train_tf_dataset = ImageDataset(img_path,
+        train_tf_dataset = ChosenDatasetClass(self.img_path,
                                     class_dirs=self.seen_dirs,
                                     transform=train_transform,
                                     limit_imgs_per_class=limit_imgs_per_class)
     
-        val_tf_dataset = ImageDataset(img_path,
+        val_tf_dataset = ChosenDatasetClass(self.img_path,
                                     class_dirs=self.seen_dirs,
                                     transform=val_transform,
                                     limit_imgs_per_class=limit_imgs_per_class)
@@ -193,14 +178,14 @@ class DataLoader():
         #####################################
 
         template_imgs = [None] * num_seen_classes
-        for img_path, label in train_tf_dataset.samples:
-            if "template" in img_path:
-                template_imgs[label] = img_path
+        for _img_path, _label in train_tf_dataset.samples:
+            if "template" in _img_path:
+                template_imgs[_label] = _img_path
 
         # if a random image if some classes don't have a template image
-        for img_path, label in train_tf_dataset.samples:
-            if template_imgs[label] is None:
-                template_imgs[label] = img_path
+        for _img_path, _label in train_tf_dataset.samples:
+            if template_imgs[_label] is None:
+                template_imgs[_label] = _img_path
 
         self.template_imgs = template_imgs
 
@@ -259,12 +244,12 @@ class DataLoader():
 
         # add unseen dataset
         if len(self.unseen_dirs) > 0:
-            self.datasets["unseen_test"] = ImageDataset(img_path,
-                                                    # preprocessing_path,
+            self.datasets["unseen_test"] = ChosenDatasetClass(self.img_path,
                                                     class_dirs=self.unseen_dirs,
                                                     unseen_class_offset=len(train_tf_dataset.classes),
                                                     transform=val_transform,
                                                     limit_imgs_per_class=limit_imgs_per_class)
+            
         else:
             self.datasets["unseen_test"] = None
         
@@ -293,32 +278,35 @@ class DataLoader():
             generator = torch.Generator(device='cuda')
             
         
-        def custom_collate(instances):
-            # handle sample, label, and path like normal
-            # but handle detections as list of lists.
+        # def custom_collate(instances):
+        #     # handle sample, label, and path like normal
+        #     # but handle detections as list of lists.
             
-            # elem = instances[0] # tuple: (sample, label, path, detections)
+        #     # elem = instances[0] # tuple: (sample, label, path, detections)
             
-            batch = []
+        #     batch = []
             
-            for i in range(len(instances[0])):
-                batch.append([instance[i] for instance in instances])
+        #     for i in range(len(instances[0])):
+        #         batch.append([instance[i] for instance in instances])
 
-            # print("batch[0]", len(batch[0]), type(batch[0][0]))
+        #     # print("batch[0]", len(batch[0]), type(batch[0][0]))
             
-            # apply default collate for: sample, label, path
-            batch[0] = torch.utils.data.default_collate(batch[0])
-            batch[1] = torch.utils.data.default_collate(batch[1])
-            batch[2] = torch.utils.data.default_collate(batch[2])
+        #     # apply default collate for: sample, label, path
+        #     for i in range(len(batch)):
+        #         if i != 3:
+        #             batch[i] = torch.utils.data.default_collate(batch[i])
+        #     # batch[1] = torch.utils.data.default_collate(batch[1])
+        #     # batch[2] = torch.utils.data.default_collate(batch[2])
 
-            return batch
+        #     return batch
         
         self.dataloaders = {x: torch.utils.data.DataLoader(self.datasets[x],
                                                            num_workers=num_workers,
                                                            batch_size=batch_size,
                                                         #    generator=generator,
                                                            shuffle=shuffle,
-                                                           collate_fn=custom_collate)
+                                                        #    collate_fn=custom_collate
+                                                           )
                             for x in dataset_name_list}
         
         self.dataset_lens = {x: len(self.datasets[x]) for x in dataset_name_list}
@@ -348,7 +336,12 @@ class DataLoader():
         #! This seems broken when dataloader is on cuda!
         dl_iter = iter(self.dataloaders[type_name])
         
-        sample, labels, path, detections = next(dl_iter)
+        batch = next(dl_iter)
+        if len(next(dl_iter)) == 4:
+            sample, labels, path, detections = batch
+        else:
+            sample, labels, path, detections, res_sample, homo_matrix, angle  = batch
+        # sample, labels, path, detections = 
             
         # for i, (sample, labels, path, detections) in enumerate(self.dataloaders[type_name]):
             

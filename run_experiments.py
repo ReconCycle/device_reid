@@ -6,12 +6,19 @@ from main import Main
 if __name__ == '__main__':
     # run all experiments
 
-    # classification
+    # ! rotation CNN
     main = Main(["--mode", "train",
-                "--model", "classify",
+                "--model", "rotation",
                 "--early_stopping", "True",
                 "--freeze_backbone", "False",
-                "--train_epochs", "600"])
+                "--train_epochs", "10"])
+
+    # ! classification
+    # main = Main(["--mode", "train",
+    #             "--model", "classify",
+    #             "--early_stopping", "True",
+    #             "--freeze_backbone", "False",
+    #             "--train_epochs", "600"])
 
     # main = Main(["--mode", "eval",
     #             "--model", "classify",

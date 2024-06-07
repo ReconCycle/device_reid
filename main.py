@@ -44,6 +44,8 @@ from model_sift import SIFTModel
 from model_clip import ClipModel
 from model_classify import ClassifyModel
 
+from model_rotation_est_cnn import RotationModel
+
 
 # do as if we are in the parent directory
 # sys.path.insert(1, os.path.join(sys.path[0], '..'))
@@ -142,11 +144,10 @@ class Main():
 
 
         if self.args.seen_classes == [] and self.args.unseen_classes == []:
-            if self.args.model == "classify":
+            if self.args.model in ["classify"]:
                 self.args.seen_classes, self.args.unseen_classes = random_seen_unseen_class_split(img_path, seen_split=1.0)
             else:
                 self.args.seen_classes, self.args.unseen_classes = random_seen_unseen_class_split(img_path)
-
 
         self.model_rgb = True
         if self.args.model in ["superglue", "sift"] or self.args.backbone == "superglue":
@@ -266,7 +267,7 @@ class Main():
                                       freeze_backbone=self.args.freeze_backbone,
                                       visualise=self.args.visualise)
 
-        elif self.args.model == "classify":
+        elif self.args.model in ["classify"]: #! debug
             print("classify model")
             self.model = ClassifyModel(num_classes=len(self.args.seen_classes),
                                       batch_size=self.args.batch_size,
@@ -275,7 +276,14 @@ class Main():
                                       freeze_backbone=self.args.freeze_backbone,
                                       labels=self.args.seen_classes,
                                       visualise=self.args.visualise)
-
+        elif self.args.model == "rotation":
+            self.model = RotationModel(num_classes=len(self.args.seen_classes),
+                                      batch_size=self.args.batch_size,
+                                      learning_rate=self.args.learning_rate,
+                                      weight_decay=self.args.weight_decay,
+                                      freeze_backbone=self.args.freeze_backbone,
+                                      labels=self.args.seen_classes,
+                                      visualise=self.args.visualise)
 
         
         # setup dataloader
@@ -307,6 +315,16 @@ class Main():
                                         unseen_classes=self.args.unseen_classes,
                                         train_transform=self.train_transform,
                                         val_transform=self.val_transform)
+        elif self.args.model in ["rotation"]:
+            # when using use_dataset_rotations, augmentations are applied in the dataloader
+            self.dl = DataLoader(self.args.img_path,
+                                        batch_size=self.args.batch_size,
+                                        num_workers=8,
+                                        shuffle=True,
+                                        seen_classes=self.args.seen_classes,
+                                        unseen_classes=self.args.unseen_classes,
+                                        use_dataset_rotations=True
+                                        ) # important flag.
 
 
         
@@ -412,6 +430,8 @@ class Main():
         elif self.args.model == "classify":
             self.model = ClassifyModel.load_from_checkpoint(model_path, strict=False)
             print("loaded ClassifyModel checkpoint!")
+        elif self.args.model == "rotation":
+            print("[red]not implemented.")
         
         trainer = pl.Trainer(callbacks=[OverrideEpochStepCallback()],
                             default_root_dir=self.args.results_path,
