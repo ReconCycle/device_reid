@@ -38,6 +38,21 @@ def random_seen_unseen_class_split(img_path, seen_split=0.5):
     unseen_classes = os_sorted(classes[split_len:])
     return seen_classes, unseen_classes
 
+def seen_unseen_class_split_from_exclude_list(img_path, exclude_list):
+    classes = [ f.name for f in os.scandir(img_path) if f.is_dir() and len(os.listdir(f)) > 0 ]
+    os_sorted(classes)
+
+    seen_classes = []
+    unseen_classes = []
+
+    for a_class in classes:
+        if a_class in exclude_list:
+            unseen_classes.append(a_class)
+        else:
+            seen_classes.append(a_class)
+
+    return seen_classes, unseen_classes
+
 class ImageDataset(datasets.ImageFolder):
     def __init__(self,
                  main_path,
@@ -45,7 +60,8 @@ class ImageDataset(datasets.ImageFolder):
                  unseen_class_offset=0,
                  transform=None,
                  exemplar_transform=None,
-                 limit_imgs_per_class=None):
+                 limit_imgs_per_class=None,
+                 template_imgs_only=False):
         
         self.main_path = main_path
 
@@ -135,11 +151,13 @@ class DataLoader():
                  train_transform=None,
                  val_transform=None,
                  limit_imgs_per_class=None,
+                 template_imgs_only=False,
                  cuda=True,
                  use_dataset_rotations=False):
         
         random_seed = 42
         np.random.seed(random_seed)
+        torch.manual_seed(42)
         
         self.img_path = img_path
         self.batch_size = batch_size
@@ -162,16 +180,21 @@ class DataLoader():
         train_tf_dataset = ChosenDatasetClass(self.img_path,
                                     class_dirs=self.seen_dirs,
                                     transform=train_transform,
-                                    limit_imgs_per_class=limit_imgs_per_class)
+                                    limit_imgs_per_class=limit_imgs_per_class, 
+                                    template_imgs_only=template_imgs_only)
     
         val_tf_dataset = ChosenDatasetClass(self.img_path,
                                     class_dirs=self.seen_dirs,
                                     transform=val_transform,
-                                    limit_imgs_per_class=limit_imgs_per_class)
+                                    limit_imgs_per_class=limit_imgs_per_class,
+                                    template_imgs_only=template_imgs_only)
         
         all_labels = [x[1] for x in train_tf_dataset.samples]
         num_seen_classes = len(set(all_labels))
         print("num_seen_classes", num_seen_classes)
+
+        print("len(train_tf_dataset)", len(train_tf_dataset))
+        print("len(val_tf_dataset)", len(val_tf_dataset))
 
         #####################################
         # create list of template images
@@ -219,6 +242,11 @@ class DataLoader():
         #####################################
         # end split
         #####################################
+
+        if template_imgs_only:
+            print("[red]PROBABLY NOT THE BEHAVIOUR YOU WANT!!!!")
+            seen_val_idxs = seen_train_idxs
+            seen_test_idxs = seen_train_idxs
         
         #! --- START OLD CODE
         # len_seen_train = int((1.0 - 2*validation_split) * len_dataset) # 0.8/0.1/0.1 split
@@ -232,6 +260,10 @@ class DataLoader():
         #     generator=generator
         # )
         #! --- END OLD CODE
+
+        print("len(seen_train_idxs)", len(seen_train_idxs))
+        print("len(seen_val_idxs)", len(seen_val_idxs))
+        print("len(seen_test_idxs)", len(seen_test_idxs))
 
         self.datasets = {}
         self.datasets["seen_train"] = torch.utils.data.Subset(train_tf_dataset, seen_train_idxs)
@@ -248,7 +280,8 @@ class DataLoader():
                                                     class_dirs=self.unseen_dirs,
                                                     unseen_class_offset=len(train_tf_dataset.classes),
                                                     transform=val_transform,
-                                                    limit_imgs_per_class=limit_imgs_per_class)
+                                                    limit_imgs_per_class=limit_imgs_per_class,
+                                                    template_imgs_only=template_imgs_only)
             
         else:
             self.datasets["unseen_test"] = None
@@ -268,7 +301,9 @@ class DataLoader():
                 dataset_name_list.append(dataset_name)
                 dataset_list.append(self.datasets[dataset_name])
 
+        # add "all"
         self.datasets["all"] = torch.utils.data.ConcatDataset([dataset_list])
+        dataset_name_list.append("all")
 
         # create the dataloaders
         # todo: fix bug, either requiring: generator=torch.Generator(device='cuda'),
@@ -338,9 +373,15 @@ class DataLoader():
         
         batch = next(dl_iter)
         if len(next(dl_iter)) == 4:
+            angles = None
             sample, labels, path, detections = batch
         else:
             sample, labels, path, detections, res_sample, homo_matrix, angle  = batch
+
+            # first row the input images, the second row the rotated images
+            sample = torch.cat((sample[:8], res_sample[:8]), 0)
+            angles = [None] * 8 + angle.tolist()
+
         # sample, labels, path, detections = 
             
         # for i, (sample, labels, path, detections) in enumerate(self.dataloaders[type_name]):
@@ -352,7 +393,7 @@ class DataLoader():
             std = np.array(std)
 
             samples_denorm = []
-            for sample_img in sample:
+            for idx, sample_img in enumerate(sample):
                 # undo ToTensorV2
                 
                 # CHW -> HWC
@@ -376,9 +417,30 @@ class DataLoader():
                 # cv2.imshow("sample_denorm", sample_denorm)
                 # k = cv2.waitKey(0)
 
+                if angles[idx] is not None:
+                    # print("angle idx", int(np.rad2deg(angles[idx])))
+                    # print(type(sample_denorm), sample_denorm.shape, sample_denorm[150, 150, 1])
+
+                    position = (20,60)
+                    cv2.putText(
+                        sample_denorm, #numpy array on which text is written
+                        str(int(np.rad2deg(angles[idx]))) + "deg", #text
+                        position, #position at which writing has to start
+                        cv2.FONT_HERSHEY_SIMPLEX, #font family
+                        2, #font size
+                        (209, 80, 0, 255), #font color
+                        4) #font stroke
+
                 # we convert back to python format to view in grid
                 # HWC -> CHW
-                sample_denorm = sample_denorm.transpose(2, 0, 1)
+                sample_denorm = sample_denorm.transpose(2, 0, 1) 
+                
+                # ! added astype, copy for put text
+                # sample_denorm = sample_denorm.transpose(2, 0, 1).astype(np.uint8).copy() 
+                # sample_denorm = np.ascontiguousarray(sample_denorm, dtype=np.uint8)
+                
+
+
                 sample_denorm = torch.from_numpy(sample_denorm)
 
                 samples_denorm.append(sample_denorm)

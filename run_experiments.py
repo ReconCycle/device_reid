@@ -1,17 +1,33 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"]="1" #! specify gpu here
+os.environ["CUDA_VISIBLE_DEVICES"]="5" #! specify gpu here
 from main import Main
 
 if __name__ == '__main__':
     # run all experiments
 
-    # ! rotation CNN
-    main = Main(["--mode", "train",
+    main = Main(["--mode", "eval",
                 "--model", "rotation",
-                "--early_stopping", "True",
-                "--freeze_backbone", "False",
-                "--train_epochs", "10"])
+                "--loss_type", "bin_loss",
+                "--manual_eval", "True",
+                "--checkpoint_path", "results/2024-06-26__11-15_rotation_binloss_FINAL/lightning_logs/version_0/checkpoints/epoch=478-step=478.ckpt"])
+
+    # main = Main(["--mode", "eval",
+    #             "--model", "rotation",
+    #             "--loss_type", "rot_loss",
+    #             "--manual_eval", "True",
+    #             "--checkpoint_path", "results/2024-06-25__12-20_rotation_rotloss/lightning_logs/version_0/checkpoints/epoch=473-step=473.ckpt"])
+
+    # ! rotation CNN
+    # main = Main(["--mode", "train",
+    #             "--model", "rotation",
+    #             "--loss_type", "rot_loss", #! bin_loss
+    #             "--batch_size", "56", #! batch size 56 on 3090
+    #             "--batches_per_epoch", "100",
+    #             "--early_stopping", "False",
+    #             "--freeze_backbone", "False",
+    #             "--template_imgs_only", "False", #! provides only template images and makes train/val/test the same
+    #             "--train_epochs", "500"])
 
     # ! classification
     # main = Main(["--mode", "train",

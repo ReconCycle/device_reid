@@ -36,7 +36,8 @@ class ImageDatasetRotations(datasets.ImageFolder):
                  unseen_class_offset=0,
                  transform=None,
                  exemplar_transform=None,
-                 limit_imgs_per_class=None):
+                 limit_imgs_per_class=None,
+                 template_imgs_only=False):
         
         self.main_path = main_path
 
@@ -46,29 +47,34 @@ class ImageDatasetRotations(datasets.ImageFolder):
         dataset_params = config["dataset_params"]
         self.aug_params = dataset_params['augmentation_params']
 
+        self.transform = transform
+
         
         self.class_dirs = class_dirs
         self.unseen_class_offset = unseen_class_offset
         self.exemplar_transform = exemplar_transform
-        
-        # if limit_imgs_per_class is not None:
-        #     print("\n"+"="*20)
-        #     print("Imgs per class limited to", limit_imgs_per_class)
-        #     print("="*20, "\n")
-        #     # to make sure each class is of approximately the same size, we set the number of images per class to 30
-        #     def is_valid_file(file_path):
-        #         file_name = os.path.basename(file_path)
-        #         num = int(re.findall(r'\d+', file_name)[-1])
+
+        if template_imgs_only:
+            print("\n"+"="*20)
+            print("limit to template image")
+            print("="*20, "\n")
+            def is_valid_file(file_path):
+                file_name = os.path.basename(file_path)
+
+                # num = int(re.findall(r'\d+', file_name)[-1]) # gets the last number in the filename
+                # print("file_name", file_name, num)
+                if "template" in file_name:
+                    print("template", file_path)
+                    return True
                 
-        #         if num < limit_imgs_per_class:
-        #             return True
-        #         else:
-        #             return False
-        # else:
-        #     is_valid_file = None
+                else:
+                    return False
+
+        else:
+            is_valid_file = None
         
         
-        super(ImageDatasetRotations, self).__init__(main_path, transform)
+        super(ImageDatasetRotations, self).__init__(main_path, transform, is_valid_file=is_valid_file)
         
     def __getitem__(self, index: int):
         """
@@ -82,7 +88,7 @@ class ImageDatasetRotations(datasets.ImageFolder):
 
 
         image = cv2.imread(path)
-        height, width = image.shape[0:2]
+
             
         if self.target_transform is not None:
             label = self.target_transform(label)
@@ -114,22 +120,36 @@ class ImageDatasetRotations(datasets.ImageFolder):
 
         # # print("sample_rot.size", sample_rot.size)
 
-        # # TODO: now apply normalise and to ToTensorV2
-        transform_normalise = A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255, always_apply=True)
-
         #! =========================
         #! COPY PASTED FROM superglue_training/get_perspective_hcas_firealarms.py
 
-        homo_matrix = get_perspective_mat(self.aug_params['patch_ratio'], width//2, height//2, self.aug_params['perspective_x'], self.aug_params['perspective_y'], self.aug_params['shear_ratio'], self.aug_params['shear_angle'], self.aug_params['rotation_angle'], self.aug_params['scale'], self.aug_params['translation'])
+        image = cv2.resize(image, (300, 300), interpolation = cv2.INTER_AREA) #! downscale!!
+        height, width = image.shape[0:2]
+
+        homo_matrix, rotation_angle_value = get_perspective_mat(self.aug_params['patch_ratio'], width//2, height//2, self.aug_params['perspective_x'], self.aug_params['perspective_y'], self.aug_params['shear_ratio'], self.aug_params['shear_angle'], self.aug_params['rotation_angle'], self.aug_params['scale'], self.aug_params['translation'])
         res_image = cv2.warpPerspective(image.copy(), homo_matrix, (width, height))
+
+        transform_normalise = A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255, always_apply=True)
 
         aug_list = [A.OneOf([A.MotionBlur(p=0.5), A.GaussNoise(p=0.6)], p=0.5),
                     A.RGBShift(r_shift_limit=40, g_shift_limit=40, b_shift_limit=40, p=0.5),
-                    A.RandomBrightnessContrast(p=0.5),
-                    transform_normalise, #! ADDED
-                    ToTensorV2() #! ADDED
+                    A.RandomBrightnessContrast(p=0.5)
                     ]
-        aug_func = A.Compose(aug_list, p=0.65)
+
+        if self.transform is None:
+            aug_list.extend([transform_normalise, ToTensorV2()])
+
+            aug_func = A.Compose(aug_list, p=1.0) # was: p=0.65
+        elif self.transform == "don't normalise":
+            #! special case!
+            
+            aug_list.extend([ToTensorV2()])
+
+            aug_func = A.Compose(aug_list, p=1.0) # was: p=0.65
+
+        else:
+            aug_func = self.transform
+
 
         def apply_augmentations(image1, image2):
             image1_dict = {'image': image1}
@@ -137,17 +157,20 @@ class ImageDatasetRotations(datasets.ImageFolder):
             result1, result2 = aug_func(**image1_dict), aug_func(**image2_dict)
             return result1['image'], result2['image']
 
-        if True:
-            image, res_image = apply_augmentations(image, res_image)
-
-        def angle_from_homo(homo):
-            # https://stackoverflow.com/questions/58538984/how-to-get-the-rotation-angle-from-findhomography
-            u, _, vh = np.linalg.svd(homo[0:2, 0:2])
-            R = u @ vh
-            angle = math.atan2(R[1,0], R[0,0]) # angle between [-pi, pi)
-            return angle
         
-        angle = angle_from_homo(homo_matrix)
+        image, res_image = apply_augmentations(image, res_image)
+
+        # def angle_from_homo(homo):
+        #     # https://stackoverflow.com/questions/58538984/how-to-get-the-rotation-angle-from-findhomography
+        #     u, _, vh = np.linalg.svd(homo[0:2, 0:2])
+        #     R = u @ vh
+        #     angle = math.atan2(R[1,0], R[0,0]) # angle between [-pi, pi)
+        #     return angle
+        
+        # angle = angle_from_homo(homo_matrix)
+
+        # ! WE CAN GET THE ANGLE DIRECTLY!!!!
+        angle = rotation_angle_value
 
         #! =========================
 

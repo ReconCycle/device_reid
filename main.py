@@ -26,7 +26,7 @@ import argparse
 import exp_utils as exp_utils
 from exp_utils import str2bool, clip_transform
 
-from data_loader import DataLoader, random_seen_unseen_class_split
+from data_loader import DataLoader, random_seen_unseen_class_split, seen_unseen_class_split_from_exclude_list
 from data_loader_even_pairwise import DataLoaderEvenPairwise
 from data_loader_triplet import DataLoaderTriplet
 
@@ -45,6 +45,8 @@ from model_clip import ClipModel
 from model_classify import ClassifyModel
 
 from model_rotation_est_cnn import RotationModel
+
+from tensorboard_plotter import TensorboardPlotter
 
 
 # do as if we are in the parent directory
@@ -88,6 +90,11 @@ class Main():
         # superglue/sift
         # pw_concat_bce/pw_cos/pw_cos2
         # triplet
+
+        
+        # for rotation model, loss_type: rot_loss, sin_cos_loss, bin_loss
+        parser.add_argument('--loss_type', type=str, default=None) 
+
         parser.add_argument('--backbone', type=str, default=None) # resnet_imagenet, clip, superglue
         parser.add_argument('--visualise', type=str2bool, default=False)
         parser.add_argument('--cutoff', type=float, default=0.01) # SIFT=0.01, superglue=0.5
@@ -106,7 +113,11 @@ class Main():
         parser.add_argument('--seen_classes', type=str, nargs='+', default=[])
         parser.add_argument('--unseen_classes', type=str, nargs='+', default=[])
 
+        parser.add_argument('--template_imgs_only', type=str2bool, default=False)
+        
+
         # for eval only:
+        parser.add_argument('--manual_eval', type=str2bool, default=False)
         parser.add_argument('--results_path', type=str, default="")
         parser.add_argument('--checkpoint_path', type=str, default="")
 
@@ -145,9 +156,20 @@ class Main():
 
         if self.args.seen_classes == [] and self.args.unseen_classes == []:
             if self.args.model in ["classify"]:
+                #! FOR THESE MODELS WE DON'T HAVE UNSEEN CLASSES!
                 self.args.seen_classes, self.args.unseen_classes = random_seen_unseen_class_split(img_path, seen_split=1.0)
             else:
-                self.args.seen_classes, self.args.unseen_classes = random_seen_unseen_class_split(img_path)
+                exclude_list = ['firealarm_back_02', 'firealarm_back_04', 'firealarm_back_04.1', 'firealarm_back_06', 'firealarm_back_08', 'firealarm_back_08.1', 'firealarm_back_10', 
+                'firealarm_front_02', 'firealarm_front_04', 'firealarm_front_06', 'firealarm_front_08', 'firealarm_front_08.1', 'firealarm_front_10', 
+                'firealarm_inside_02', 'firealarm_inside_04',
+                'hca_02', 'hca_04', 'hca_06', 'hca_08', 'hca_10', 'hca_12',
+                'hca_back_02', 'hca_back_02.1', 'hca_back_04', 'hca_back_04.1', 'hca_back_06', 'hca_back_08', 'hca_back_10', 'hca_back_12',
+                'hca_front_02', 'hca_front_04', 'hca_front_06', 'hca_front_08', 'hca_front_10', 'hca_front_12'
+                ]
+                self.args.seen_classes, self.args.unseen_classes = seen_unseen_class_split_from_exclude_list(img_path, exclude_list)
+
+                print("debug: seen classes:", self.args.seen_classes)
+                print("debug: unseen classes:", self.args.unseen_classes)
 
         self.model_rgb = True
         if self.args.model in ["superglue", "sift"] or self.args.backbone == "superglue":
@@ -170,6 +192,13 @@ class Main():
             # don't normalise. We only evaluate these models
             self.val_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
             self.train_transform = A.Compose([A.Resize(300, 300), ToTensorV2()])
+
+
+        elif self.args.model == "rotation":
+            
+            # augmentations defined in the dataloader
+            self.val_transform = None
+            self.train_transform = None
 
         else:
             val_tf_list = []
@@ -281,6 +310,7 @@ class Main():
                                       batch_size=self.args.batch_size,
                                       learning_rate=self.args.learning_rate,
                                       weight_decay=self.args.weight_decay,
+                                      loss_type=self.args.loss_type,
                                       freeze_backbone=self.args.freeze_backbone,
                                       labels=self.args.seen_classes,
                                       visualise=self.args.visualise)
@@ -323,12 +353,14 @@ class Main():
                                         shuffle=True,
                                         seen_classes=self.args.seen_classes,
                                         unseen_classes=self.args.unseen_classes,
-                                        use_dataset_rotations=True
+                                        use_dataset_rotations=True,
+                                        template_imgs_only=self.args.template_imgs_only #! THIS WILL LIMIT TO TEMPLATE IMAGES ONLY. AND THEY WILL BE IN TRAIN AND IN VAL/TEST SETS
                                         ) # important flag.
 
 
         
-        logging.basicConfig(filename=os.path.join(self.args.results_path, f'{self.args.mode}.log'), level=logging.DEBUG)
+        logging.basicConfig(filename=os.path.join(self.args.results_path, f'{self.args.mode}.log'), format='%(message)s', level=logging.DEBUG)
+        logging.getLogger('matplotlib.font_manager').disabled = True
         self.log_args()
 
         self.dl.dataloader_imgs.visualise("seen_train", mean=self.norm_mean, std=self.norm_std, save_path=self.args.results_path)
@@ -431,7 +463,8 @@ class Main():
             self.model = ClassifyModel.load_from_checkpoint(model_path, strict=False)
             print("loaded ClassifyModel checkpoint!")
         elif self.args.model == "rotation":
-            print("[red]not implemented.")
+            print("loaded RotationModel checkpoint!")
+            self.model = RotationModel.load_from_checkpoint(model_path, loss_type=self.args.loss_type, strict=False)
         
         trainer = pl.Trainer(callbacks=[OverrideEpochStepCallback()],
                             default_root_dir=self.args.results_path,
@@ -448,15 +481,55 @@ class Main():
         if self.args.model == "classify":
             test_datasets = ["seen_train", "seen_val", "seen_test"]
         else:
-            test_datasets = ["seen_train", "seen_val", "test"]
+            test_datasets = ["seen_train", "seen_val", "test", "seen_test", "unseen_test"]
         self.model.test_datasets = test_datasets
-        output = trainer.test(self.model,
-                                  dataloaders=[self.dl.dataloaders[name] for name in test_datasets])
-        for i, name in enumerate(test_datasets):
-            logging.info(f"eval {name}:" + str(output[i]))
+
+        if self.args.manual_eval:
+            for i, name in enumerate(test_datasets):
+                self.manual_eval(self.dl.dataloaders[name], name)
+        else:
+            output = trainer.test(self.model,
+                                    dataloaders=[self.dl.dataloaders[name] for name in test_datasets])
+            for i, name in enumerate(test_datasets):
+                print(f"eval {name}:" + str(output[i]))
+                logging.info(f"eval {name}:" + str(output[i]))
     
         if self.args.model == "classify":
             self.plot_confusion()
+
+        # plot tensorboard
+        tplot = TensorboardPlotter()
+        tensorboard_dir = os.path.join(self.args.results_path, "lightning_logs/version_0")
+        if os.path.isdir(tensorboard_dir):
+            tensorboard_out = tplot.tabulate_events(tensorboard_dir)
+            tplot.auto_plot(tensorboard_out, is_show=False, save_path=self.args.results_path)
+        else:
+            print(f"[red]{tensorboard_dir} doesn't exist!")
+
+
+    def manual_eval(self, dataloader, dataset_name):
+
+        self.print_and_log("\n============================================")
+        self.print_and_log(f"evaluating: {dataset_name}")
+        self.print_and_log("============================================")
+
+        dataset_len = len(dataloader.dataset)
+        self.print_and_log(f"dataset len: {dataset_len}")
+
+        diff_abs_median, diff_abs_mean, diff_abs_std, diff_square_median, diff_square_mean, diff_square_std = self.model.manual_eval(dataloader)
+            
+        self.print_and_log("angles abs:")
+        self.print_and_log("med\t mean\t std\t")
+        self.print_and_log('{:.3}\t {:.3}\t {:.3}\t'.format(diff_abs_median, diff_abs_mean, diff_abs_std))
+
+        self.print_and_log("angles square:")
+        self.print_and_log("med\t mean\t std\t")
+        self.print_and_log('{:.3}\t {:.3}\t {:.3}\t'.format(diff_square_median, diff_square_mean, diff_square_std))
+
+
+    def print_and_log(self, msg):
+        print(msg)
+        logging.info(msg)
 
 
     def plot_confusion(self):
@@ -493,20 +566,7 @@ class Main():
         sn.heatmap(df_cm, annot=True)
         plt.savefig(os.path.join(self.args.results_path, "confusion.png"))
 
-    # def eval_manual(self):
-    #     self.results_path = "experiments/results/2023-03-10__15-28-03"
-    #     self.checkpoint = "lightning_logs/version_0/checkpoints/epoch=19-step=2000.ckpt"
-    #     self.model.load_from_checkpoint(os.path.join(self.results_path, self.checkpoint), strict=False)
-    #     self.model.to(self.device)
-    #     self.model.eval()
-        
-    #     for i, (sample1, label1, dets1, sample2, label2, dets2) in enumerate(self.dl.dataloaders["seen_train"]):
-    #         sample1 = sample1.to(self.device)
-    #         sample2 = sample2.to(self.device)
-            
-    #         out = self.model(sample1, sample2)
-            
-    #         print("out", out)
+
 
 # https://github.com/Lightning-AI/lightning/issues/2110#issuecomment-1114097730
 # logging: https://github.com/Lightning-AI/lightning/discussions/6182
