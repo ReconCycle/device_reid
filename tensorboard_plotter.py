@@ -54,9 +54,28 @@ class TensorboardPlotter():
             label = key
             if labels is not None and len(labels) == len(keys):
                 label = labels[idx]
+
+            if label == "val/seen_val/loss_epoch":
+                print(f"renaming {label} to validation")
+                label = "val"
+                
+            elif label == "train/loss_epoch":
+                print(f"renaming {label} to train")
+                label = "train"
+
+            elif label == "val/seen_val/acc_epoch":
+                print(f"renaming {label} to validation")
+                label = "val"
+            elif label == "train/acc_epoch":
+                print(f"renaming {label} to train")
+                label = "train"
+            
             ax.plot(df[key], label=label, color=cset[idx])
         
-        plt.legend(loc="upper right")
+        if ylabel == "acc":
+            plt.legend(loc="upper left")
+        else:
+            plt.legend(loc="upper right")
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
         plt.grid(True)
@@ -102,7 +121,7 @@ class TensorboardPlotter():
 if __name__ == '__main__':
     tplot = TensorboardPlotter()
 
-    log_dir = os.path.expanduser("~/device_reid/results/2024-06-10__11-56_rotation_MSEloss/lightning_logs/version_0")
+    log_dir = os.path.expanduser("~/device_reid/results/2024-07-03__08-33_classify/lightning_logs/version_0")
 
     tensorboard_out = tplot.tabulate_events(log_dir)
-    tplot.auto_plot(tensorboard_out)
+    tplot.auto_plot(tensorboard_out, is_show=False, save_path=log_dir)

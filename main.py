@@ -3,8 +3,9 @@ import os
 from datetime import datetime
 import cv2
 import numpy as np
-# import json
+import json
 from rich import print
+from numpyencoder import NumpyEncoder
 from tqdm import tqdm
 import logging
 import torch
@@ -203,13 +204,17 @@ class Main():
         else:
             val_tf_list = []
             train_tf_list = [
-                A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.25, rotate_limit=45, p=0.5),
+                A.GaussNoise(p=0.6),
+                A.OneOf([A.AdvancedBlur(p=0.5), A.MotionBlur(p=0.5), A.Blur(p=0.5), A.GlassBlur(p=0.5), A.GaussianBlur(p=0.5), A.ZoomBlur(p=0.5)], p=0.5),
                 A.OpticalDistortion(p=0.5),
                 A.GridDistortion(p=0.5),
-                A.HueSaturationValue(p=0.5),
-                A.RandomResizedCrop(400, 400, p=0.3),
+                A.OneOf([
+                    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.25, rotate_limit=360, p=0.5),
+                    A.Affine(rotate=(-360, 360), p=0.5),
+                ], p=0.5),
                 A.RGBShift(r_shift_limit=40, g_shift_limit=40, b_shift_limit=40, p=0.5),
-                A.RandomBrightnessContrast(p=0.3),
+                A.ColorJitter(brightness=0.7, contrast=0.7, saturation=0.7, hue=0.7, always_apply=None, p=0.8),
+                A.RandomResizedCrop(400, 400, p=0.3),
             ]
 
             # computed transform using compute_mean_std() to give:
@@ -400,7 +405,7 @@ class Main():
         logging.info(f"starting training...")
 
         callbacks = [OverrideEpochStepCallback()]
-        checkpoint_callback = ModelCheckpoint(monitor="val/seen_val/loss_epoch", mode="min", save_top_k=2)
+        checkpoint_callback = ModelCheckpoint(monitor="val/seen_val/loss_epoch", mode="min", save_top_k=-1, every_n_epochs=10, save_last=True)
         callbacks.append(checkpoint_callback)
         if self.args.early_stopping:
             early_stop_callback = EarlyStopping(monitor="val/seen_val/loss_epoch", mode="min", patience=20, min_delta=0.01, verbose=False)
@@ -423,8 +428,6 @@ class Main():
         trainer.fit(model=self.model, 
                     train_dataloaders=self.dl.dataloaders["seen_train"],
                     val_dataloaders=self.dl.dataloaders["seen_val"])
-        
-        trainer.save_checkpoint(os.path.join(os.path.dirname(checkpoint_callback.best_model_path), "last.ckpt"))
         
         logging.info(f"best model path: {checkpoint_callback.best_model_path}")
         logging.info(f"best model score: {checkpoint_callback.best_model_score}")
@@ -539,12 +542,13 @@ class Main():
         y_pred = []
         y_true = []
 
+        dataset_name = "seen_test"
         # iterate over test data
-        for inputs, labels, *_ in tqdm(self.dl.dataloaders["seen_train"]):
+        for inputs, labels, *_ in tqdm(self.dl.dataloaders[dataset_name]):
                 logits = self.model(inputs) # Feed Network
 
                 preds = torch.argmax(logits, dim=1)
-                y_pred.extend(preds) # Save Prediction
+                y_pred.extend(preds.data.cpu().numpy()) # Save Prediction
                 
                 labels = labels.data.cpu().numpy()
                 y_true.extend(labels) # Save Truth
@@ -553,18 +557,42 @@ class Main():
         classes = self.args.seen_classes
 
         # Build confusion matrix
-        cf_matrix = confusion_matrix(y_true, y_pred)
+        # cf_matrix = confusion_matrix(y_true, y_pred)
+        cf_matrix = confusion_matrix(y_true, y_pred, normalize='pred')
+        diagonal = np.diagonal(cf_matrix)
 
-        print("classes", len(classes))
-        print("y_true", len(y_true))
-        print("y_pred", len(y_pred))
-        print("cf_matrix", cf_matrix.shape)
+        self.print_and_log(f"len classes {len(classes)}")
+        self.print_and_log(f"len y_true {len(y_true)}")
+        self.print_and_log(f"len y_pred {len(y_pred)}")
+        self.print_and_log(f"cf_matrix {cf_matrix.shape}")
+        self.print_and_log(f"diagonal {diagonal}")
+        self.print_and_log(f"len diagonal {len(diagonal)}")
 
-        df_cm = pd.DataFrame(cf_matrix / np.sum(cf_matrix, axis=1)[:, None], index = [i for i in classes],
+        total_acc = np.mean(diagonal)
+
+        self.print_and_log(f"total_acc {total_acc}")
+
+        print("y_true[0]", y_true[0])
+
+        print("classes", classes, type(classes), type(classes[0]))
+        print("classes", list(classes))
+
+        with open(os.path.join(self.args.results_path, f'{dataset_name}_results.json'), 'w') as f:
+            json.dump({ 
+                "y_pred": y_pred,
+                "y_true": y_true,
+                "classes": list(classes),
+                "class_acc": diagonal,
+                "acc": total_acc
+            }, f, indent=4, sort_keys=True,
+              separators=(', ', ': '), ensure_ascii=False,
+              cls=NumpyEncoder)
+
+        df_cm = pd.DataFrame(cf_matrix, index = [i for i in classes],
                             columns = [i for i in classes])
         plt.figure(figsize = (24,14))
         sn.heatmap(df_cm, annot=True)
-        plt.savefig(os.path.join(self.args.results_path, "confusion.png"))
+        plt.savefig(os.path.join(self.args.results_path, "confusion_train.png"))
 
 
 

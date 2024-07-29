@@ -417,7 +417,7 @@ class DataLoader():
                 # cv2.imshow("sample_denorm", sample_denorm)
                 # k = cv2.waitKey(0)
 
-                if angles[idx] is not None:
+                if angles is not None and angles[idx] is not None:
                     # print("angle idx", int(np.rad2deg(angles[idx])))
                     # print(type(sample_denorm), sample_denorm.shape, sample_denorm[150, 150, 1])
 

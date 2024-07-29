@@ -161,9 +161,9 @@ def evaluate_topk(data_subset, k=5):
 
                 # test = clip_encoding[0]
 
-                # print("test.shape", test.shape)
+                # print("clip_encoding.shape", clip_encoding.shape)
 
-                diff = train_encodings - clip_encoding
+                # diff = train_encodings - clip_encoding
 
                 # print("diff.shape", diff.shape)
 
@@ -354,14 +354,27 @@ def plot_dist_for_class(class_id):
     fig = plt.figure(figsize = (6, 4), dpi=200)
     ax = fig.add_subplot(111)
 
+    # Customizing grid lines
+    plt.grid(color='gray', linestyle=':', linewidth=0.5, zorder=0)
+    plt.gca().set_axisbelow(True)  # Ensure grid lines are drawn below the bars
+
     xs, ys = zip(*count_sorted_freq)
     xs = [str(x_item) for x_item in xs]
-    ax.bar(xs, ys, color=cset[0])
+    rects1 = ax.bar(xs, ys, color=cset[0])
+
+    # add labels to bars
+    def autolabel(rects):
+        for rect in rects:
+            h = rect.get_height()
+            ax.text(rect.get_x()+rect.get_width()/2., 1.05*h, '%.2f'%h,
+                    ha='center', va='bottom', fontsize='small')
+
+    autolabel(rects1)
 
     for i, x in enumerate(xs):
         offset_image(i, x, ax=plt.gca())
 
-    plt.ylim(0, 1) 
+    plt.ylim(0, 1.1) 
     ax.set_title(f"distribution top-5, for class ID {class_id}")
     ax.set_ylabel('frequency')
     ax.set_xlabel('class ID', labelpad=50)

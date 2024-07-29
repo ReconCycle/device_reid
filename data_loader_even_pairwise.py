@@ -221,6 +221,9 @@ class DataLoaderEvenPairwise():
             #                                   unseen_classes=unseen_classes)
 
         else:
+            print("dataloader even pairwise: img_path", img_path)
+            print("dataloader even pairwise: seen_classes", seen_classes)
+            print("dataloader even pairwise: unseen_classes", unseen_classes)
             self.dataloader_imgs = DataLoader(img_path,
                                          batch_size=batch_size,
                                          shuffle=True, #! if we don't shuffle, then the pairs are silly
