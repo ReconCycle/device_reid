@@ -68,6 +68,26 @@ print(f"dataset lens: {dl.dataset_lens}")
 print(f"seen classes: {dl.classes['seen']}")
 print(f"num classes: {num_classes}")
 
+def pretty_class_label(class_idx, full=False):
+    label = dl.classes['seen'][class_idx]
+    label_number = label.rsplit('_', 1)[-1]
+    if full:
+        label_new = label.replace("hca_front", "HCA front")
+        label_new = label_new.replace("hca_back", "HCA back")
+        label_new = label_new.replace("firealarm_back", "smoke det. back")
+        label_new = label_new.replace("firealarm_front", "smoke det. front")
+        label_new = label_new.replace('_', ' ')
+
+        return label_new
+    else:
+        #! these label_numbers are not unique!!!
+        #! add spaces as a hack!
+        if "back" in label:
+            label_number += " "
+        if "firealarm" in label:
+            label_number += "   "
+    return label_number
+
 ######################################
 # make a lookup for parent classes
 ######################################
@@ -359,8 +379,13 @@ def plot_dist_for_class(class_id):
     plt.gca().set_axisbelow(True)  # Ensure grid lines are drawn below the bars
 
     xs, ys = zip(*count_sorted_freq)
-    xs = [str(x_item) for x_item in xs]
-    rects1 = ax.bar(xs, ys, color=cset[0])
+    xs_str = [str(x_item) for x_item in xs]
+    print("xs_str", xs_str)
+
+    x_label_number = [pretty_class_label(x_item) for x_item in xs]
+    print("x_label_number", x_label_number)
+
+    rects1 = ax.bar(x_label_number, ys, color=cset[0])
 
     # add labels to bars
     def autolabel(rects):
@@ -371,13 +396,13 @@ def plot_dist_for_class(class_id):
 
     autolabel(rects1)
 
-    for i, x in enumerate(xs):
+    for i, x in enumerate(xs_str):
         offset_image(i, x, ax=plt.gca())
 
     plt.ylim(0, 1.1) 
-    ax.set_title(f"distribution top-5, for class ID {class_id}")
-    ax.set_ylabel('frequency')
-    ax.set_xlabel('class ID', labelpad=50)
+    ax.set_title(f"distribution top-5, for {pretty_class_label(class_id, full=True)}")
+    ax.set_ylabel('Frequency')
+    ax.set_xlabel('Device ID', labelpad=50)
 
     plt.show()
 
